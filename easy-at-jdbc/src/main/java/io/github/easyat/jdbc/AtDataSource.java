@@ -10,9 +10,16 @@ import java.util.logging.Logger;
 
 /** JDBC DataSource proxy that writes undo logs before executing supported DML. */
 public final class AtDataSource implements DataSource {
-    private final String resourceId; private final DataSource delegate; private final SqlUndoLogGenerator generator;
+    private final String resourceId; private final DataSource delegate; private final SqlUndoLogGenerator generator; private final LocalTransactionBridge bridge; private final boolean requireLocalTransaction;
     public AtDataSource(String resourceId, DataSource delegate, AtTransactionManager manager, GlobalLockManager locks) {
-        this.resourceId=resourceId;this.delegate=delegate;this.generator=new SqlUndoLogGenerator(resourceId,manager,locks);
+        this(resourceId,delegate,manager,locks,LocalTransactionBridge.NOOP,false,BranchRegistrar.NOOP);
+    }
+    public AtDataSource(String resourceId, DataSource delegate, AtTransactionManager manager, GlobalLockManager locks, LocalTransactionBridge bridge, boolean requireLocalTransaction) {
+        this(resourceId,delegate,manager,locks,bridge,requireLocalTransaction,BranchRegistrar.NOOP);
+    }
+    public AtDataSource(String resourceId, DataSource delegate, AtTransactionManager manager, GlobalLockManager locks, LocalTransactionBridge bridge, boolean requireLocalTransaction, BranchRegistrar registrar) {
+        this.resourceId=resourceId;this.delegate=delegate;this.bridge=bridge;this.requireLocalTransaction=requireLocalTransaction;
+        this.generator=new SqlUndoLogGenerator(resourceId,manager,locks,bridge,registrar);
     }
     public DataSource getDelegate(){return delegate;} public String getResourceId(){return resourceId;}
     public Connection getConnection() throws SQLException{return proxy(delegate.getConnection());}
@@ -34,6 +41,7 @@ public final class AtDataSource implements DataSource {
             if(name.startsWith("set")&&args!=null&&args.length>=2&&args[0] instanceof Integer){params.put((Integer)args[0],args[1]);return call(target,method,args);}
             if(name.equals("clearParameters")){params.clear();return call(target,method,args);}
             if((name.equals("executeUpdate")||name.equals("execute")||name.equals("executeLargeUpdate"))&&AtContext.active()&&!AtContext.undoing()){
+                if(requireLocalTransaction&&!bridge.isActive())throw new AtException("easyAt requires a Spring local transaction on resource '"+resourceId+"'; annotate the method with @Transactional");
                 Connection connection=target.getConnection();
                 SqlUndoLogGenerator.Capture capture=generator.capture(connection,sql,params);
                 try { Object result=call(target,method,args); generator.after(connection,capture); return result; }

@@ -37,11 +37,23 @@ DELETE FROM account WHERE id=?
 
 表必须有单列主键（通过 JDBC 元数据识别，不依赖 `id` 命名），`UPDATE` 和 `DELETE` 的 `WHERE` 条件必须精确匹配主键。多表 DML、批量更新、子查询、函数表达式、存储过程、DDL、无主键表会在业务 SQL 执行前抛出 `UnsupportedAtSqlException`，避免生成不可靠的 undo log。
 
-## 跨服务 XID 传播
+## 跨服务 AT 协调
 
-客户端可将 `AtRestTemplateInterceptor` 加入 `RestTemplate`，它会自动写入 `X-EasyAt-Xid` 请求头。Boot 2/3 Starter 均会注册服务端 Filter，收到请求后自动绑定该 XID。
+跨服务 AT 必须使用**共享的事务 Repository 和全局锁实现**（JDBC 或 Redis）。`AtDataSource` 在首个 DML 前经 `DefaultBranchRegistrar` 注册分支（`resourceId`、服务名、回调地址、顺序）。协调端点由 Starter 自动暴露：
 
-跨服务 AT 必须使用**共享的事务 Repository 和全局锁实现**，例如后续的 Redis/JDBC 实现。File Repository 仅适用于单实例或共享磁盘验证，不适用于多主机生产集群。
+- `POST /_easy-at/v1/branches`：注册分支
+- `POST /_easy-at/v1/branches/{branchId}/commit`
+- `POST /_easy-at/v1/branches/{branchId}/rollback`
+
+三者均幂等；`BranchRetryScheduler` 扫描待处理分支并指数退避重试。
+
+传播客户端：
+
+- `RestTemplate`：`AtRestTemplateInterceptor` + `EasyAtRestTemplateCustomizer`（Starter 自动注册）。
+- OpenFeign：`EasyAtFeignInterceptor`（`RequestInterceptor`）。
+- `WebClient`：因离线仓库暂缺 `spring-webflux`，`ExchangeFilterFunction` 传播待后续补充。
+
+Header 安全：所有跨服务请求带 `X-EasyAt-Xid`/`X-EasyAt-Deadline`/`X-EasyAt-Source`/`X-EasyAt-Signature`，由 `HmacSigner` 签名并做恒定时间校验、超时与重放保护；生产模式缺少 HMAC 密钥时启动失败。File Repository 仅适用于单实例或共享磁盘验证，不适用于多主机生产集群。
 
 ## JDBC 集群模式
 
@@ -74,6 +86,7 @@ public void createOrder() {
 - `easy-at-core`：事务状态机、上下文、undo log 与 SPI
 - `easy-at-storage-file`：文件事务日志
 - `easy-at-jdbc`：JDBC undo 执行基础设施
+- `easy-at-storage-redis`：Redis 事务日志与全局锁
 - `easy-at-spring`：Spring AOP 集成
 - `easy-at-spring-boot2-starter`：Spring Boot 2.7 Starter
 - `easy-at-spring-boot3-starter`：Spring Boot 3.x Starter

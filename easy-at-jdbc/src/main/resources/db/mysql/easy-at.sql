@@ -5,6 +5,9 @@ CREATE TABLE IF NOT EXISTS easy_at_global (
   timeout_at TIMESTAMP NOT NULL,
   retry_count INT NOT NULL DEFAULT 0,
   next_retry_at TIMESTAMP NULL,
+  version BIGINT NOT NULL DEFAULT 0,
+  owner VARCHAR(128) NULL,
+  lease_until TIMESTAMP NULL,
   created_at TIMESTAMP NOT NULL,
   updated_at TIMESTAMP NOT NULL,
   INDEX idx_easy_at_global_recovery (status, next_retry_at)
@@ -16,7 +19,7 @@ CREATE TABLE IF NOT EXISTS easy_at_undo_log (
   resource_id VARCHAR(128) NOT NULL,
   table_name VARCHAR(128) NOT NULL,
   pk_name VARCHAR(128) NOT NULL,
-  pk_value BLOB NOT NULL,
+  pk_value VARCHAR(512) NOT NULL,
   rollback_sql TEXT NOT NULL,
   rollback_params LONGBLOB NOT NULL,
   before_image LONGBLOB NULL,
@@ -36,4 +39,19 @@ CREATE TABLE IF NOT EXISTS easy_at_lock (
   created_at TIMESTAMP NOT NULL,
   PRIMARY KEY(resource_id, table_name, pk_value),
   INDEX idx_easy_at_lock_xid (xid)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS easy_at_branch (
+  branch_id VARCHAR(128) PRIMARY KEY,
+  xid VARCHAR(128) NOT NULL,
+  resource_id VARCHAR(128) NOT NULL,
+  status VARCHAR(32) NOT NULL,
+  service_name VARCHAR(128),
+  callback_url VARCHAR(512),
+  sequence INT NOT NULL,
+  retry_count INT NOT NULL DEFAULT 0,
+  next_retry_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP NOT NULL,
+  INDEX idx_easy_at_branch_xid (xid)
 ) ENGINE=InnoDB;

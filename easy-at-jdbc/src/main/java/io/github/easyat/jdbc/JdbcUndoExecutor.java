@@ -33,16 +33,16 @@ public final class JdbcUndoExecutor implements UndoExecutor {
         boolean exists=rs.next();
         RowImage expected=record.getAfterImage();
         if(expected==null){
-          if(exists)throw new AtException("Dirty write detected for deleted row: "+record.getTableName()+"/"+record.getPrimaryKeyValue());
+          if(exists)throw new DirtyWriteException("Dirty write detected for deleted row: "+record.getTableName()+"/"+record.getPrimaryKeyValue());
           return;
         }
-        if(!exists)throw new AtException("Dirty write detected: row is missing: "+record.getTableName()+"/"+record.getPrimaryKeyValue());
+        if(!exists)throw new DirtyWriteException("Dirty write detected: row is missing: "+record.getTableName()+"/"+record.getPrimaryKeyValue());
         ResultSetMetaData meta=rs.getMetaData();
         Map<String,Object> actual=new TreeMap<String,Object>(String.CASE_INSENSITIVE_ORDER);
         for(int i=1;i<=meta.getColumnCount();i++)actual.put(meta.getColumnLabel(i),rs.getObject(i));
         for(Map.Entry<String,Object> entry:expected.getColumns().entrySet()){
           if(!actual.containsKey(entry.getKey())||!sameValue(actual.get(entry.getKey()),entry.getValue()))
-            throw new AtException("Dirty write detected for "+record.getTableName()+"/"+record.getPrimaryKeyValue()+", column="+entry.getKey());
+            throw new DirtyWriteException("Dirty write detected for "+record.getTableName()+"/"+record.getPrimaryKeyValue()+", column="+entry.getKey());
         }
       }
     }

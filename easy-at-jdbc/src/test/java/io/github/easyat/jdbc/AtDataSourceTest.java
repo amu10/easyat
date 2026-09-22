@@ -52,6 +52,11 @@ class AtDataSourceTest {
         try(Connection c=dataSource.getConnection();PreparedStatement s=c.prepareStatement("UPDATE account SET balance=? WHERE id=? OR balance=?")){s.setInt(1,0);s.setLong(2,1L);s.setInt(3,100);assertThrows(UnsupportedAtSqlException.class,s::executeUpdate);}
         try(Connection c=raw.getConnection();Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT balance FROM account WHERE id=1")){r.next();assertEquals(100,r.getInt(1));}
     }
-    static final class MemoryRepo implements AtRepository {final Map<String,AtTransaction> data=new HashMap<String,AtTransaction>();public void create(AtTransaction t){data.put(t.getXid(),t);}public Optional<AtTransaction> find(String x){return Optional.ofNullable(data.get(x));}public void save(AtTransaction t){data.put(t.getXid(),t);}public List<AtTransaction> recoverable(long n,int l){return Collections.emptyList();}}
+    static final class MemoryRepo implements AtRepository {final Map<String,AtTransaction> data=new HashMap<String,AtTransaction>();public void create(AtTransaction t){data.put(t.getXid(),t);}public Optional<AtTransaction> find(String x){return Optional.ofNullable(data.get(x));}public void save(AtTransaction t){data.put(t.getXid(),t);}public List<AtTransaction> recoverable(long n,int l){return Collections.emptyList();}
+      public boolean transition(String xid,AtStatus expected,long expectedVersion,AtStatus next){AtTransaction t=data.get(xid);if(t==null||t.getStatus()!=expected||t.getVersion()!=expectedVersion)return false;t.applyTransition(next);return true;}
+      public boolean claimLease(String xid,String owner,long leaseUntil,long now){return true;}
+      public void releaseLease(String xid,String owner){}
+      public void updateRecovery(String xid,int retries,long nextRetryAt){AtTransaction t=data.get(xid);if(t!=null){t.setRetries(retries);t.setNextRetryAt(nextRetryAt);}}
+      public List<AtTransaction> findByStatus(AtStatus status,int limit){List<AtTransaction> out=new ArrayList<AtTransaction>();for(AtTransaction t:data.values())if(t.getStatus()==status)out.add(t);return out;}}
     static final class MemoryLocks implements GlobalLockManager {boolean locked;public void acquire(String r,String t,String k,String x){locked=true;}public void releaseByXid(String x){locked=false;}}
 }

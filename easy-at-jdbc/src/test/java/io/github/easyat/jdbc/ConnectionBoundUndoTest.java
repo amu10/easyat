@@ -44,8 +44,8 @@ class ConnectionBoundUndoTest {
   private JdbcDataSource dataSource(String name){JdbcDataSource ds=new JdbcDataSource();ds.setURL("jdbc:h2:mem:"+name+";MODE=MySQL;DB_CLOSE_DELAY=-1");return ds;}
   private void createSchema(DataSource ds)throws SQLException {try(Connection c=ds.getConnection();Statement s=c.createStatement()){
     s.execute("CREATE TABLE account (id BIGINT PRIMARY KEY, balance INT)");s.execute("INSERT INTO account(id,balance) VALUES(1,100)");
-    s.execute("CREATE TABLE easy_at_global (xid VARCHAR(128) PRIMARY KEY,name VARCHAR(255),status VARCHAR(32),timeout_at TIMESTAMP,retry_count INT,next_retry_at TIMESTAMP,created_at TIMESTAMP,updated_at TIMESTAMP)");
-    s.execute("CREATE TABLE easy_at_undo_log (undo_id VARCHAR(128) PRIMARY KEY,xid VARCHAR(128),resource_id VARCHAR(255),table_name VARCHAR(255),pk_name VARCHAR(255),pk_value BLOB,rollback_sql VARCHAR(1000),rollback_params BLOB,before_image BLOB,after_image BLOB,status VARCHAR(32),created_at TIMESTAMP,updated_at TIMESTAMP)");
+    s.execute("CREATE TABLE easy_at_global (xid VARCHAR(128) PRIMARY KEY,name VARCHAR(255),status VARCHAR(32),timeout_at TIMESTAMP,retry_count INT,next_retry_at TIMESTAMP,version BIGINT,owner VARCHAR(128),lease_until TIMESTAMP,created_at TIMESTAMP,updated_at TIMESTAMP)");
+    s.execute("CREATE TABLE easy_at_undo_log (undo_id VARCHAR(128) PRIMARY KEY,xid VARCHAR(128),resource_id VARCHAR(255),table_name VARCHAR(255),pk_name VARCHAR(255),pk_value VARCHAR(512),rollback_sql VARCHAR(1000),rollback_params BLOB,before_image BLOB,after_image BLOB,status VARCHAR(32),created_at TIMESTAMP,updated_at TIMESTAMP)");
     s.execute("CREATE TABLE easy_at_lock (resource_id VARCHAR(255),table_name VARCHAR(255),pk_value VARCHAR(512),xid VARCHAR(128),lease_until TIMESTAMP,created_at TIMESTAMP,PRIMARY KEY(resource_id,table_name,pk_value))");
   }}
   private int balance(DataSource ds)throws SQLException {try(Connection c=ds.getConnection();Statement s=c.createStatement();ResultSet r=s.executeQuery("SELECT balance FROM account WHERE id=1")){r.next();return r.getInt(1);}}
