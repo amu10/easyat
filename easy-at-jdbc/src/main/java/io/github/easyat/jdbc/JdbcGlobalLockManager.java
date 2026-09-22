@@ -1,0 +1,14 @@
+package io.github.easyat.jdbc;
+
+import io.github.easyat.core.*;
+import javax.sql.DataSource;
+import java.sql.*;
+
+/** Database global lock using the primary key of easy_at_lock as the atomic conflict point. */
+public final class JdbcGlobalLockManager implements GlobalLockManager {
+    private final DataSource dataSource; private final long leaseMillis;
+    public JdbcGlobalLockManager(DataSource dataSource,long leaseMillis){this.dataSource=dataSource;this.leaseMillis=leaseMillis;}
+    @Override public void acquire(String resource,String table,String key,String xid){long now=System.currentTimeMillis();try(Connection c=dataSource.getConnection()){try(PreparedStatement insert=c.prepareStatement("INSERT INTO easy_at_lock(resource_id,table_name,pk_value,xid,lease_until,created_at) VALUES(?,?,?,?,?,?)")){insert.setString(1,resource);insert.setString(2,table);insert.setString(3,key);insert.setString(4,xid);insert.setTimestamp(5,new Timestamp(now+leaseMillis));insert.setTimestamp(6,new Timestamp(now));insert.executeUpdate();return;}catch(SQLException duplicate){try(PreparedStatement read=c.prepareStatement("SELECT xid,lease_until FROM easy_at_lock WHERE resource_id=? AND table_name=? AND pk_value=?")){read.setString(1,resource);read.setString(2,table);read.setString(3,key);try(ResultSet rs=read.executeQuery()){if(!rs.next())throw new AtException("Global lock disappeared during acquire");String owner=rs.getString(1);Timestamp lease=rs.getTimestamp(2);if(xid.equals(owner)){renew(c,resource,table,key,xid,now);return;}if(lease!=null&&lease.getTime()<now){try(PreparedStatement takeover=c.prepareStatement("UPDATE easy_at_lock SET xid=?,lease_until=? WHERE resource_id=? AND table_name=? AND pk_value=? AND lease_until<?")){takeover.setString(1,xid);takeover.setTimestamp(2,new Timestamp(now+leaseMillis));takeover.setString(3,resource);takeover.setString(4,table);takeover.setString(5,key);takeover.setTimestamp(6,new Timestamp(now));if(takeover.executeUpdate()==1)return;}}}}throw new AtException("Global lock conflict: "+resource+"/"+table+"/"+key);}}catch(SQLException e){throw new AtException("Cannot acquire JDBC global lock",e);}}
+    @Override public void releaseByXid(String xid){try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement("DELETE FROM easy_at_lock WHERE xid=?")){p.setString(1,xid);p.executeUpdate();}catch(SQLException e){throw new AtException("Cannot release JDBC locks",e);}}
+    private void renew(Connection c,String r,String t,String k,String xid,long now)throws SQLException{try(PreparedStatement p=c.prepareStatement("UPDATE easy_at_lock SET lease_until=? WHERE resource_id=? AND table_name=? AND pk_value=? AND xid=?")){p.setTimestamp(1,new Timestamp(now+leaseMillis));p.setString(2,r);p.setString(3,t);p.setString(4,k);p.setString(5,xid);p.executeUpdate();}}
+}

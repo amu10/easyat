@@ -1,0 +1,2 @@
+package io.github.easyat.core;
+public enum AtStatus { ACTIVE, COMMITTING, COMMITTED, ROLLING_BACK, ROLLED_BACK, ROLLBACK_FAILED, MANUAL_INTERVENTION }

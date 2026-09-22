@@ -14,7 +14,7 @@ easyAt 是一个不需要独立协调服务器、嵌入 Spring Boot 应用运行
        ▼
 AtDataSource 拦截 JDBC PreparedStatement
        │
-       ├─ 解析 INSERT / UPDATE / DELETE
+       ├─ 使用 JSqlParser 解析 INSERT / UPDATE / DELETE
        ├─ 查询 before image
        ├─ 获取 resource + table + primary-key 全局锁
        ├─ 持久化 undo log
@@ -35,7 +35,7 @@ UPDATE account SET balance=? WHERE id=?
 DELETE FROM account WHERE id=?
 ```
 
-表必须有主键，`UPDATE` 和 `DELETE` 的 `WHERE` 条件必须精确匹配主键。多表 DML、批量更新、子查询、函数表达式、存储过程、DDL、无主键表会直接拒绝执行，避免生成不可靠的 undo log。
+表必须有单列主键（通过 JDBC 元数据识别，不依赖 `id` 命名），`UPDATE` 和 `DELETE` 的 `WHERE` 条件必须精确匹配主键。多表 DML、批量更新、子查询、函数表达式、存储过程、DDL、无主键表会在业务 SQL 执行前抛出 `UnsupportedAtSqlException`，避免生成不可靠的 undo log。
 
 ## 跨服务 XID 传播
 

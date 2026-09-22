@@ -1,0 +1,3 @@
+package io.github.easyat.boot2;
+import io.github.easyat.core.*; import io.github.easyat.spring.AtRestTemplateInterceptor; import javax.servlet.*; import javax.servlet.http.*; import java.io.IOException;
+public final class AtXidFilter implements Filter { private final AtTransactionManager manager; public AtXidFilter(AtTransactionManager m){manager=m;} public void doFilter(ServletRequest request,ServletResponse response,FilterChain chain)throws IOException,ServletException{String xid=((HttpServletRequest)request).getHeader(AtRestTemplateInterceptor.XID_HEADER);boolean bound=xid!=null&&!AtContext.active();try{if(bound)manager.join(xid);chain.doFilter(request,response);}finally{if(bound)AtContext.clear();}} }
