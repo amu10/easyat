@@ -25,10 +25,10 @@ easyAt 是 **AT（Automatic Transaction）模式** 的嵌入式分布式事务�
 | 模块 | 职责 | 关键类 |
 |---|---|---|
 | `easy-at-core` | 状态机、上下文、undo 模型、SPI 接口 | `AtTransactionManager`、`AtStatus`、`AtContext`、`AtRepository`、`UndoDataCodec`、`HmacSigner` |
-| `easy-at-jdbc` | SQL 解析、image 采集、undo 生成/执行、JDBC 存储与锁 | `AtDataSource`、`SqlUndoLogGenerator`、`JdbcUndoExecutor`、`JdbcAtRepository`、`JdbcGlobalLockManager`、`JacksonUndoDataCodec` |
+| `easy-at-jdbc` | SQL 解析、image 采集、undo 生成/执行、JDBC 存储、锁与历史清理 | `AtDataSource`、`SqlUndoLogGenerator`、`JdbcUndoExecutor`、`JdbcAtRepository`、`JdbcGlobalLockManager`、`JdbcAtCleaner` |
 | `easy-at-storage-file` | 单机文件存储 | `FileAtRepository`、`FileGlobalLockManager` |
 | `easy-at-storage-redis` | Redis 存储与锁（Lua 原子） | `RedisAtRepository`、`RedisGlobalLockManager` |
-| `easy-at-spring` | Spring AOP、传播、恢复、协调、管理 | `EasyAtAspect`、`AtRecoveryScheduler`、`BranchCoordinator`、`AtRestTemplateInterceptor`/`EasyAtFeignInterceptor`/`WebClientPropagator`、`ManagementService` |
+| `easy-at-spring` | Spring AOP、传播、恢复、清理、协调、管理 | `EasyAtAspect`、`AtRecoveryScheduler`、`AtCleanupScheduler`、`BranchCoordinator`、`ManagementService` |
 | `easy-at-spring-boot2/3-starter` | 自动装配、管理端点、Filter | `EasyAtAutoConfiguration`、`EasyAtManagementController`、`AtXidFilter` |
 
 ## 2. 事务生命周期（主链路）
@@ -125,3 +125,318 @@ easyAt 是 **AT（Automatic Transaction）模式** 的嵌入式分布式事务�
 | undo 怎么加密/脱敏 | `jdbc/JacksonUndoDataCodec.java#encodeValue()/toDiagnosticString()` |
 | 自动装配了哪些 Bean | `boot2/3/EasyAtAutoConfiguration.java` |
 | 管理接口有哪些 | `boot2/3/EasyAtManagementController.java` |
+
+## 8. 用一次转账把所有代码串起来
+
+示例业务方法同时标注：
+
+```java
+@EasyAtTransactional(name = "account-transfer", timeout = 30000)
+@Transactional
+public void transfer(...) {
+    jdbc.update("UPDATE account SET balance=? WHERE id=?", ...);
+    jdbc.update("UPDATE account SET balance=? WHERE id=?", ...);
+}
+```
+
+这里存在两层事务，职责不同：
+
+| 层次 | 注解 | 解决的问题 |
+|---|---|---|
+| easyAt 全局事务 | `@EasyAtTransactional` | 记录 XID、Undo Log、全局锁、跨服务协调和故障恢复 |
+| Spring 本地事务 | `@Transactional` | 保证当前数据库连接中的业务 DML 与 Undo Log 一起提交或一起回滚 |
+
+完整调用顺序如下：
+
+```text
+Controller
+  └─ EasyAtAspect.around()
+       ├─ manager.begin()
+       │    ├─ INSERT easy_at_global，状态 ACTIVE
+       │    └─ AtContext.bind(xid)
+       └─ Spring TransactionInterceptor
+            ├─ 开启本地 JDBC 事务
+            ├─ 执行第一条 UPDATE
+            │    └─ AtDataSource/SqlUndoLogGenerator
+            │         ├─ 解析 SQL 和参数
+            │         ├─ 查主键元数据
+            │         ├─ 获取 easy_at_lock
+            │         ├─ SELECT 旧数据，生成 before image
+            │         ├─ INSERT easy_at_undo_log
+            │         ├─ 执行业务 UPDATE
+            │         └─ SELECT 新数据，写 after image
+            ├─ 执行第二条 UPDATE（同样流程）
+            └─ 提交本地事务
+       ├─ manager.commit()
+       │    └─ ACTIVE → COMMITTING → COMMITTED
+       └─ 释放 XID 持有的全局锁
+```
+
+为什么 `fail=true` 后看不到新增 Undo Log？异常发生时 Spring 会先回滚本地事务，业务 UPDATE 和同连接写入的 Undo Log 一起回滚。之后 easyAt 把全局事务收敛到 `ROLLED_BACK`。这不是漏写，而是本地事务原子性的结果。
+
+## 9. `AtDataSource` 到底代理了什么
+
+`AtDataSourceBeanPostProcessor` 会在 Spring Bean 初始化后检查每个 `DataSource`：
+
+1. 在 `datasource-exclude` 中的跳过；
+2. `resources.<beanName>.enabled=false` 的跳过；
+3. 其余包装为 `AtDataSource`；
+4. 默认 `resourceId` 就是 DataSource Bean 名称，也可以显式覆盖。
+
+`AtDataSource` 不自己实现数据库协议，它使用 JDK 动态代理逐层包裹：
+
+```text
+DataSource → Connection → PreparedStatement
+```
+
+只有同时满足以下条件时才捕获 SQL：
+
+- 当前线程存在 XID；
+- 当前不是执行 Undo 的线程；
+- SQL 是受支持的 INSERT、UPDATE 或 DELETE；
+- 操作的不是 `easy_at_*` 内部表。
+
+内部表必须绕过捕获，否则“写 Undo Log”本身又会产生 Undo Log，最终无限递归耗尽连接池。
+
+PreparedStatement 的 `setInt`、`setLong`、`setObject` 等参数会按下标保存在代理中，执行时交给 `SqlUndoLogGenerator`。因此目前要求业务 SQL使用 `?` 参数，不能把值直接拼进 SQL。
+
+## 10. `SqlUndoLogGenerator` 的三种算法
+
+### UPDATE
+
+业务 SQL：
+
+```sql
+UPDATE account SET balance=? WHERE id=?
+```
+
+捕获过程：
+
+1. 校验 `WHERE` 只有一个主键等值条件；
+2. 获取 `(resourceId, account, id)` 全局锁；
+3. 查询更新前的 `balance`；
+4. 生成反向 SQL：
+
+```sql
+UPDATE account SET balance=? WHERE id=?
+```
+
+反向 SQL 外形相同，但第一个参数保存的是旧余额。
+
+### DELETE
+
+删除前读取整行，Undo SQL 是：
+
+```sql
+INSERT INTO account(id,balance,...) VALUES (?,?,...)
+```
+
+### INSERT
+
+要求 INSERT 显式携带主键，Undo SQL 是：
+
+```sql
+DELETE FROM account WHERE id=?
+```
+
+自增主键但 SQL 中没有主键值的 INSERT 当前不支持，因为框架在执行前无法可靠构造锁键和补偿记录。
+
+## 11. 四张 JDBC 表分别负责什么
+
+### `easy_at_global`
+
+一行代表一个全局事务。
+
+- `xid`：全局唯一事务号；
+- `status`：事务状态；
+- `timeout_at`：超时时间；
+- `version`：CAS 乐观锁版本；
+- `owner/lease_until`：恢复任务的多实例租约；
+- `retry_count/next_retry_at`：失败重试信息。
+
+### `easy_at_undo_log`
+
+一行代表一条业务 DML 的补偿记录。
+
+- `resource_id`：应该去哪个 DataSource 回滚；
+- `table_name/pk_name/pk_value`：目标行；
+- `rollback_sql/rollback_params`：补偿 SQL 与参数；
+- `before_image/after_image`：修改前后快照；
+- `status`：该 Undo 是否已经执行。
+
+### `easy_at_lock`
+
+主键是 `(resource_id, table_name, pk_value)`。唯一键冲突就是全局锁冲突；`lease_until` 防止进程崩溃后永久死锁。
+
+### `easy_at_branch`
+
+记录跨服务参与者，包括服务名、资源、回调地址、执行顺序、状态和重试信息。发起方根据这些记录通知各参与服务提交或回滚。
+
+## 12. 状态机怎么读
+
+以 `AtStatus` 为准，不要在业务代码中直接随意修改状态：
+
+```text
+ACTIVE
+  ├─ COMMITTING → COMMITTED
+  └─ ROLLING_BACK
+       ├─ 回滚成功 → ROLLED_BACK
+       ├─ 回滚异常 → ROLLBACK_FAILED → 再次 ROLLING_BACK
+       └─ 数据被别人改过 → DIRTY_WRITE
+
+重试耗尽 → MANUAL_INTERVENTION
+```
+
+状态更新使用类似下面的 SQL：
+
+```sql
+UPDATE easy_at_global
+SET status=?, version=version+1
+WHERE xid=? AND status=? AND version=?
+```
+
+更新行数为 0 表示状态或版本已经被其他实例改变，本实例必须停止，而不是覆盖对方结果。
+
+## 13. 回滚为什么还要比较 after image
+
+假设 easyAt 把余额从 100 改成 80，之后另一个正常事务又把 80 改成 70。如果 easyAt 直接执行 Undo，把余额写回 100，就会覆盖别人的修改。
+
+因此 `JdbcUndoExecutor` 先读取当前行：
+
+```text
+当前数据 == after image → 可以执行 Undo
+当前数据 != after image → DIRTY_WRITE，停止自动回滚
+```
+
+`DIRTY_WRITE` 是保护状态，不应自动清理，也不应无限重试，需要人工判断正确数据。
+
+## 14. 自动装配如何选择实现
+
+`EasyAtAutoConfiguration` 根据配置创建 SPI 实现：
+
+```text
+storage.type=file  → FileAtRepository + FileBranchRepository
+storage.type=jdbc  → JdbcAtRepository + JdbcBranchRepository
+storage.type=redis → RedisAtRepository + RedisBranchRepository
+
+lock.type=file     → FileGlobalLockManager
+lock.type=jdbc     → JdbcGlobalLockManager
+lock.type=redis    → RedisGlobalLockManager
+```
+
+Redis 连接配置独立放置：
+
+```yaml
+easy-at:
+  storage:
+    type: jdbc
+  lock:
+    type: redis
+  redis:
+    host: localhost
+    port: 6379
+```
+
+`storage.type` 与 `lock.type` 是两个维度：前者决定事务/分支数据放哪里，后者决定行锁放哪里。
+
+## 15. 恢复和历史清理不是一回事
+
+### 恢复任务
+
+`AtRecoveryScheduler` 处理仍未正常收敛的事务，例如超时 `ACTIVE`、`ROLLING_BACK`、到期重试的 `ROLLBACK_FAILED`。它们仍然可能需要 Undo Log，不能删除。
+
+### 清理任务
+
+`AtCleanupScheduler` 只处理已经终结且超过保留期的 `COMMITTED` 与 `ROLLED_BACK`：
+
+```text
+easy_at_undo_log → easy_at_branch → easy_at_global
+```
+
+每次删除有限批次，避免大事务。`JdbcAtCleaner` 同时分批删除超过保留期的过期锁。清理默认关闭，配置见：
+
+```yaml
+easy-at:
+  cleanup:
+    enabled: true
+    interval: 1m
+    batch-size: 500
+    committed-retention: 7d
+    rolled-back-retention: 30d
+    expired-lock-retention: 10m
+```
+
+## 16. 多数据源目前支持到什么程度
+
+代码会代理多个 DataSource，并且 `JdbcUndoExecutor` 能根据 `resourceId` 路由回滚 SQL。但当前 `JdbcAtRepository` 只绑定一个协调 DataSource，读取 Undo Log 时也只查询这个数据源。
+
+因此当前边界是：
+
+- 单数据源：完整主路径可用；
+- 多数据源但一次事务只操作一个库：基本可用；
+- 一次事务同时修改多个数据库：Undo Log 分散读取和全局逆序尚未完整实现，不应直接用于生产。
+
+不要把“所有 DataSource 都被代理”误解为“跨多个本地数据库的事务已经完整实现”。
+
+## 17. 常见现象如何排查
+
+### `easy_at_global` 有数据，但 `easy_at_undo_log` 没数据
+
+依次检查：
+
+1. 是否真的执行了受支持的 DML；
+2. 方法是否经过 Spring 代理，避免同类内部直接调用；
+3. DataSource 是否被 `AtDataSourceBeanPostProcessor` 包装；
+4. 是否只执行了失败请求——本地回滚会同时撤销 Undo Log；
+5. SQL 是否操作主键，并全部使用 `?` 参数；
+6. 是否查错数据库。
+
+示例提供：
+
+```text
+GET /demo/transactions
+GET /demo/undo-logs
+```
+
+### 报 `Composite primary keys are not supported`
+
+框架当前只支持单列主键。若表实际是单主键，检查连接当前 catalog 是否正确，以及是否存在多个数据库中的同名表。主键元数据查询已经限定当前 catalog。
+
+### 报 `Unsupported AT SQL`
+
+检查是否包含 JOIN、OR、IN、子查询、批量 SQL、表达式更新、非主键 WHERE 或直接拼接常量。当前实现宁可拒绝，也不会猜测补偿 SQL。
+
+### 启动时报多个 `DataSource` 无法选择
+
+JDBC Repository、分支仓库和 JDBC 锁目前需要一个主 DataSource。为协调库设置 `@Primary`；同时注意第 16 节描述的多数据源限制。
+
+## 18. 推荐源码阅读顺序
+
+第一次阅读不要从自动配置开始逐文件看，建议按以下顺序：
+
+1. `AtStatus`：先理解状态；
+2. `AtTransaction`、`UndoRecord`、`RowImage`：理解数据模型；
+3. `AtTransactionManager`：理解 begin/commit/rollback/recover；
+4. `EasyAtAspect`：理解框架何时调用 Manager；
+5. `AtDataSource`：理解 JDBC 动态代理入口；
+6. `SqlUndoLogGenerator`：理解 Undo 的生成算法；
+7. `JdbcAtRepository`：理解数据如何落表与 CAS；
+8. `JdbcUndoExecutor`：理解回滚和脏写保护；
+9. `JdbcGlobalLockManager`：理解并发控制；
+10. `AtRecoveryScheduler`、`AtCleanupScheduler`：理解后台任务；
+11. `EasyAtAutoConfiguration`：最后看各组件如何组装。
+
+阅读时可以在示例中依次给这些方法打断点：
+
+```text
+EasyAtAspect.around
+AtTransactionManager.begin
+SqlUndoLogGenerator.capture
+SqlUndoLogGenerator.update
+JdbcAtRepository.append
+SqlUndoLogGenerator.after
+AtTransactionManager.commit / rollback
+JdbcUndoExecutor.rollback
+```
+
+走完一次成功转账和一次失败转账，整个项目的主干就基本清楚了。

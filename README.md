@@ -7,7 +7,7 @@ easyAt 是一个不需要独立协调服务器、嵌入 Spring Boot 应用运行
 
 ## 当前状态
 
-`0.1.0-SNAPSHOT` 已实现全局事务状态机（CAS + 版本）、undo log 模型、File/JDBC/**Redis** 事务存储、JDBC DataSource 自动代理、before/after image、带租约的 JDBC/Redis 全局行锁、脏写校验、JDBC undo 执行器、多实例恢复租约、分支注册与跨服务协调端点、HMAC 签名传播（RestTemplate/Feign/WebClient）、JSON undo 编解码（版本化 + `UndoDataEncryptor`/`UndoDataMasker` SPI 自动装配）、管理 API 与 Micrometer 指标，以及 Spring Boot 2/3 Starter。
+`0.1.0` 已实现全局事务状态机（CAS + 版本）、undo log 模型、File/JDBC/**Redis** 事务存储、JDBC DataSource 自动代理、before/after image、带租约的 JDBC/Redis 全局行锁、脏写校验、JDBC undo 执行器、多实例恢复租约、分支注册与跨服务协调端点、HMAC 签名传播（RestTemplate/Feign/WebClient）、JSON undo 编解码（版本化 + `UndoDataEncryptor`/`UndoDataMasker` SPI 自动装配）、管理 API 与 Micrometer 指标，以及 Spring Boot 2/3 Starter。
 
 ## AT 执行链路
 

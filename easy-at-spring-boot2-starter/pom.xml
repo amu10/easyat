@@ -2,9 +2,9 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
   <parent>
-    <groupId>io.github.easyat</groupId>
+    <groupId>io.github.amu10</groupId>
     <artifactId>easy-at-parent</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
   </parent>
   <artifactId>easy-at-spring-boot2-starter</artifactId>
   <properties>
@@ -12,17 +12,17 @@
   </properties>
   <dependencies>
     <dependency>
-      <groupId>io.github.easyat</groupId>
+    <groupId>io.github.amu10</groupId>
       <artifactId>easy-at-spring</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>io.github.easyat</groupId>
+    <groupId>io.github.amu10</groupId>
       <artifactId>easy-at-storage-file</artifactId>
       <version>${project.version}</version>
     </dependency>
     <dependency>
-      <groupId>io.github.easyat</groupId>
+    <groupId>io.github.amu10</groupId>
       <artifactId>easy-at-storage-redis</artifactId>
       <version>${project.version}</version>
       <optional>true</optional>

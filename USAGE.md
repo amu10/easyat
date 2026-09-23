@@ -10,9 +10,9 @@
 ```xml
 <!-- Spring Boot 3.x（JDK 17+） -->
 <dependency>
-    <groupId>io.github.easyat</groupId>
+    <groupId>io.github.amu10</groupId>
     <artifactId>easy-at-spring-boot3-starter</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
 </dependency>
 ```
 
@@ -22,9 +22,9 @@ Spring Boot 2.7 项目改用 `easy-at-spring-boot2-starter`。
 > Redis 存储需要额外引入：
 > ```xml
 > <dependency>
->     <groupId>io.github.easyat</groupId>
+>     <groupId>io.github.amu10</groupId>
 >     <artifactId>easy-at-storage-redis</artifactId>
->     <version>0.1.0-SNAPSHOT</version>
+>     <version>0.1.0</version>
 > </dependency>
 > ```
 
