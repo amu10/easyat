@@ -1,6 +1,6 @@
 # easyAt Spring Boot 3 示例
 
-该示例使用 H2 和 File Repository，演示同一数据库中的转账提交与异常回滚。
+该示例使用 H2 和 JDBC Repository/Lock，演示同一数据库中的转账提交与异常回滚。
 
 ## 启动
 
