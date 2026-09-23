@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>easyAt 管理控制台</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Microsoft YaHei",sans-serif;margin:0;background:#f7f8fa;color:#1f2328}
+  header{background:#1f6feb;color:#fff;padding:12px 20px;display:flex;align-items:center;gap:12px}
+  h1{font-size:18px;margin:0;font-weight:600}
+  .wrap{max-width:1080px;margin:24px auto;padding:0 16px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center}
+  input,select,button{padding:8px 10px;border:1px solid #d0d7de;border-radius:6px;font-size:14px;font-family:inherit}
+  input{flex:1;min-width:160px}
+  button{background:#1f6feb;color:#fff;border:none;cursor:pointer;font-weight:500}
+  button.danger{background:#d1242f}
+  button.ghost{background:#fff;color:#1f6feb;border:1px solid #1f6feb}
+  button:hover{opacity:.88}
+  table{width:100%;border-collapse:collapse;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+  th,td{border:1px solid #e6e6e6;padding:8px 10px;text-align:left;font-size:13px;vertical-align:top}
+  th{background:#f0f2f5;font-weight:600}
+  .muted{color:#57606a}
+  pre{margin:4px 0;font-size:12px;white-space:pre-wrap;word-break:break-all;background:#f6f8fa;padding:8px;border-radius:6px}
+  .chip{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;background:#eef3ff;color:#1f6feb}
+  a{color:#1f6feb;text-decoration:none;margin-right:8px;cursor:pointer}
+  a.danger{color:#d1242f}
+  .err{color:#d1242f}
+</style>
+</head>
+<body>
+<header><h1>easyAt 管理控制台</h1><span style="opacity:.85;font-size:13px">只读查询 + 人工重试/回滚</span></header>
+<div class="wrap">
+  <div class="bar">
+    <input id="token" placeholder="管理 Token（X-EasyAt-Token）" style="max-width:260px">
+    <select id="status">
+      <option value="MANUAL_INTERVENTION">MANUAL_INTERVENTION</option>
+      <option value="ACTIVE">ACTIVE</option>
+      <option value="ROLLING_BACK">ROLLING_BACK</option>
+      <option value="ROLLBACK_FAILED">ROLLBACK_FAILED</option>
+      <option value="COMMITTING">COMMITTING</option>
+      <option value="COMMITTED">COMMITTED</option>
+      <option value="ROLLED_BACK">ROLLED_BACK</option>
+    </select>
+    <button onclick="list()">按状态查询</button>
+  </div>
+  <div class="bar">
+    <input id="xid" placeholder="事务 XID">
+    <button onclick="get()">按 XID 查询</button>
+  </div>
+  <div id="out"></div>
+</div>
+<script>
+const API='/_easy-at/v1';
+function token(){return document.getElementById('token').value.trim();}
+function headers(){const t=token();return t?{'X-EasyAt-Token':t}:{};}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function list(){
+  const s=document.getElementById('status').value;
+  const r=await fetch(API+'/transactions?status='+encodeURIComponent(s)+'&limit=200',{headers:headers()});
+  renderList(await r.json());
+}
+async function get(){
+  const x=document.getElementById('xid').value.trim();
+  if(!x)return;
+  const r=await fetch(API+'/transactions/'+encodeURIComponent(x),{headers:headers()});
+  renderDetail(await r.json());
+}
+function renderList(rows){
+  if(!Array.isArray(rows)){out('<pre>'+esc(JSON.stringify(rows,null,2))+'</pre>');return;}
+  let h='<table><tr><th>XID</th><th>状态</th><th>重试</th><th>owner</th><th>操作</th></tr>';
+  rows.forEach(t=>{h+='<tr><td>'+esc(t.xid)+'</td><td><span class="chip">'+esc(t.status)+'</span></td><td>'+esc(t.retries)+'</td><td class="muted">'+esc(t.owner||'')+'</td>'
+    +'<td><a onclick="view(\''+esc(t.xid)+'\')">详情</a><a onclick="act(\''+esc(t.xid)+'\',\'retry\')">重试</a><a class="danger" onclick="act(\''+esc(t.xid)+'\',\'rollback\')">回滚</a></td></tr>';});
+  h+='</table>';out(h);
+}
+function view(x){document.getElementById('xid').value=x;get();}
+function renderDetail(m){
+  if(!m||m.error){out('<pre class="err">'+esc(JSON.stringify(m,null,2))+'</pre>');return;}
+  let h='<table>';
+  h+='<tr><th>XID</th><td>'+esc(m.xid)+'</td></tr>';
+  h+='<tr><th>状态</th><td><span class="chip">'+esc(m.status)+'</span></td></tr>';
+  h+='<tr><th>重试次数</th><td>'+esc(m.retries)+'</td></tr>';
+  h+='<tr><th>owner</th><td>'+esc(m.owner||'')+'</td></tr>';
+  if(m.dirtyWriteTable)h+='<tr><th>脏写</th><td class="err">'+esc(m.dirtyWriteTable)+' / '+esc(m.dirtyWriteKey||'')+'</td></tr>';
+  h+='<tr><th>undo（已脱敏）</th><td><pre>'+esc(JSON.stringify(m.undo||[],null,2))+'</pre></td></tr>';
+  h+='</table>';
+  h+='<div class="bar" style="margin-top:12px"><button onclick="act(\''+esc(m.xid)+'\',\'retry\')">重试</button><button class="danger" onclick="act(\''+esc(m.xid)+'\',\'rollback\')">回滚</button></div>';
+  out(h);
+}
+async function act(x,kind){
+  const op=prompt('操作人 operator','admin');if(op===null)return;
+  const reason=prompt('原因 reason','manual-intervention');if(reason===null)return;
+  const r=await fetch(API+'/transactions/'+encodeURIComponent(x)+'/'+kind+'?operator='+encodeURIComponent(op)+'&reason='+encodeURIComponent(reason),{method:'POST',headers:headers()});
+  out('<pre>'+esc(JSON.stringify(await r.json(),null,2))+'</pre>');
+  view(x);
+}
+function out(html){document.getElementById('out').innerHTML=html;}
+const tk=document.getElementById('token');
+tk.value=localStorage.getItem('easyat_token')||'';
+tk.addEventListener('change',e=>localStorage.setItem('easyat_token',e.target.value));
+</script>
+</body>
+</html>

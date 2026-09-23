@@ -39,13 +39,16 @@ public class EasyAtAutoConfiguration {
 
     @Bean @ConditionalOnMissingBean HmacSigner easyAtHmacSigner(){return new HmacSigner(props.getTransport().getHmacSecret());}
     @Bean @ConditionalOnMissingBean EasyAtMetrics easyAtMetrics(ObjectProvider<MeterRegistry> registry){return new EasyAtMetrics(registry.getIfAvailable());}
+    @Bean @ConditionalOnMissingBean UndoDataCodec easyAtUndoDataCodec(ObjectProvider<UndoDataEncryptor> encryptor,ObjectProvider<UndoDataMasker> masker){
+        return new JacksonUndoDataCodec(encryptor.getIfAvailable(),masker.getIfAvailable());
+    }
 
     @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.storage",name="type",havingValue="jdbc")
-    AtRepository jdbcAtRepository(DataSource dataSource){return new JdbcAtRepository(dataSource);}
+    AtRepository jdbcAtRepository(DataSource dataSource,UndoDataCodec codec){return new JdbcAtRepository(dataSource,codec);}
     @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.storage",name="type",havingValue="file",matchIfMissing=true)
     AtRepository fileAtRepository(){return new FileAtRepository(Paths.get(props.getStorage().getFileDir()));}
     @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.storage",name="type",havingValue="redis")
-    AtRepository redisAtRepository(JedisPool pool){return new RedisAtRepository(pool);}
+    AtRepository redisAtRepository(JedisPool pool,UndoDataCodec codec){return new RedisAtRepository(pool,codec,"easy-at");}
 
     @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.lock",name="type",havingValue="jdbc")
     GlobalLockManager jdbcAtLockManager(DataSource dataSource){return new JdbcGlobalLockManager(dataSource,props.getLock().getLease().toMillis(),props.getLock().getWaitTimeout().toMillis());}
@@ -69,8 +72,8 @@ public class EasyAtAutoConfiguration {
     }
     @Bean @ConditionalOnMissingBean EasyAtTransportSecurity easyAtTransportSecurity(HmacSigner signer){return new EasyAtTransportSecurity(signer,props.isProduction());}
     @Bean @ConditionalOnMissingBean CoordinationService coordinationService(BranchCoordinator coordinator,EasyAtTransportSecurity security){return new CoordinationService(coordinator,security);}
-    @Bean @ConditionalOnMissingBean ManagementService managementService(AtRepository r,AtTransactionManager m,EasyAtMetrics metrics){
-        return new ManagementService(r,m,metrics,props.getManagement().isEnabled(),props.getManagement().getToken());
+    @Bean @ConditionalOnMissingBean ManagementService managementService(AtRepository r,AtTransactionManager m,EasyAtMetrics metrics,UndoDataCodec codec){
+        return new ManagementService(r,m,metrics,props.getManagement().isEnabled(),props.getManagement().getToken(),codec);
     }
 
     @Bean(destroyMethod="close") @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.recovery",name="enabled",havingValue="true",matchIfMissing=true)
@@ -104,6 +107,8 @@ public class EasyAtAutoConfiguration {
         return new EasyAtRestTemplateCustomizer(new AtRestTemplateInterceptor(signer,props.getApplicationName()));
     }
     @Bean @ConditionalOnClass(name="feign.RequestInterceptor") EasyAtFeignInterceptor easyAtFeignInterceptor(HmacSigner signer){return new EasyAtFeignInterceptor(signer,props.getApplicationName());}
+    @Bean @ConditionalOnClass(name="org.springframework.web.reactive.function.client.WebClient")
+    Object easyAtWebClientCustomizer(HmacSigner signer){return WebClientPropagator.createCustomizer(signer,props.getApplicationName());}
 
     @Bean @ConditionalOnProperty(prefix="easy-at.storage",name="type",havingValue="redis")
     JedisPool easyAtJedisPool(){

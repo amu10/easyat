@@ -4,7 +4,7 @@ easyAt 是一个不需要独立协调服务器、嵌入 Spring Boot 应用运行
 
 ## 当前状态
 
-`0.1.0-SNAPSHOT` 已实现全局事务状态机、undo log 模型、File/JDBC 事务存储、JDBC DataSource 自动代理、before/after image、带租约的 JDBC 全局行锁、脏写校验、JDBC undo 执行器、超时恢复调度、Spring AOP 事务入口，以及 Spring Boot 2/3 Starter。
+`0.1.0-SNAPSHOT` 已实现全局事务状态机（CAS + 版本）、undo log 模型、File/JDBC/**Redis** 事务存储、JDBC DataSource 自动代理、before/after image、带租约的 JDBC/Redis 全局行锁、脏写校验、JDBC undo 执行器、多实例恢复租约、分支注册与跨服务协调端点、HMAC 签名传播（RestTemplate/Feign/WebClient）、JSON undo 编解码（版本化 + `UndoDataEncryptor`/`UndoDataMasker` SPI 自动装配）、管理 API 与 Micrometer 指标，以及 Spring Boot 2/3 Starter。
 
 ## AT 执行链路
 
@@ -51,7 +51,7 @@ DELETE FROM account WHERE id=?
 
 - `RestTemplate`：`AtRestTemplateInterceptor` + `EasyAtRestTemplateCustomizer`（Starter 自动注册）。
 - OpenFeign：`EasyAtFeignInterceptor`（`RequestInterceptor`）。
-- `WebClient`：因离线仓库暂缺 `spring-webflux`，`ExchangeFilterFunction` 传播待后续补充。
+- `WebClient`：`WebClientPropagator` 通过反射注入 `ExchangeFilterFunction`（仅当 `spring-webflux` 在 classpath 时自动激活，不引入编译期依赖）。
 
 Header 安全：所有跨服务请求带 `X-EasyAt-Xid`/`X-EasyAt-Deadline`/`X-EasyAt-Source`/`X-EasyAt-Signature`，由 `HmacSigner` 签名并做恒定时间校验、超时与重放保护；生产模式缺少 HMAC 密钥时启动失败。File Repository 仅适用于单实例或共享磁盘验证，不适用于多主机生产集群。
 
@@ -70,6 +70,43 @@ easy-at:
 MySQL 脚本位于 `easy-at-jdbc/src/main/resources/db/mysql/easy-at.sql`，PostgreSQL 脚本位于 `easy-at-jdbc/src/main/resources/db/postgresql/easy-at.sql`。JDBC 锁通过 `(resource_id, table_name, pk_value)` 唯一键争用，默认租约为 30 秒；事务结束时按 XID 释放。Starter 同时启动每 5 秒一次、每批最多 100 笔的本地恢复扫描器，超时 `ACTIVE` 和待重试的 `ROLLBACK_FAILED` 会被回滚。
 
 JDBC Repository 已启用 connection-bound undo writer：经 `AtDataSource` 执行的 DML 在关闭自动提交或由 Spring `@Transactional` 管理时，会在**同一条 JDBC Connection**中写入 before/after image，因此本地事务回滚会同时撤销业务 DML 与 undo log。自动提交模式仍无法提供“DML 与 undo log 同时提交”的崩溃原子性，生产业务应使用 Spring `@Transactional`。
+
+## Redis 存储
+
+共享 Redis 时启用：
+
+```yaml
+easy-at:
+  storage:
+    type: redis
+  lock:
+    type: redis
+```
+
+`easy-at-storage-redis` 提供 `RedisAtRepository`/`RedisBranchRepository`/`RedisGlobalLockManager`，状态 CAS、token/租约锁、恢复队列均通过 Lua 脚本保证原子性。在 `easy-at` 配置下填入 `host`/`port`/密码/`database` 即可，Starter 自动构建 `JedisPool`。
+
+## 运维：管理 API 与指标
+
+管理端点（`easy-at.management.enabled=true` 时暴露，需 `easy-at.management.token` 鉴权）：
+
+- `GET  /_easy-at/v1/transactions/{xid}`
+- `GET  /_easy-at/v1/transactions?status=MANUAL_INTERVENTION`
+- `POST /_easy-at/v1/transactions/{xid}/retry`
+- `POST /_easy-at/v1/transactions/{xid}/rollback`
+- `GET  /_easy-at/v1/ui`：内置只读管理控制台（按状态/XID 查询、人工重试/回滚）
+
+返回的事务视图包含 `undo` 列表，敏感列经 `UndoDataMasker` 自动脱敏。Micrometer 暴露活跃事务、提交/回滚/回滚失败计数、锁冲突、恢复队列深度与恢复耗时，并通过 MDC 在日志中携带 `xid`/`resourceId`。
+
+## 加解密与脱敏 SPI
+
+`JacksonUndoDataCodec` 在 Starter 中自动装配为 `UndoDataCodec` Bean，并把容器里的 `UndoDataEncryptor` / `UndoDataMasker` 注入：
+
+```java
+@Bean UndoDataEncryptor myEncryptor(){ return new AesUndoDataEncryptor(keySpec); }
+@Bean UndoDataMasker myMasker(){ return new ColumnMasker("ssn", "password"); }
+```
+
+加密在 undo 落库时按列进行（密文以 `enc` 标签写入 JSON），脱敏在管理 API 诊断输出时按列进行，敏感值不会以明文出现在日志或管理接口中。
 
 ## 使用事务注解
 
