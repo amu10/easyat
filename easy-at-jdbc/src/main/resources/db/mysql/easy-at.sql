@@ -2,14 +2,14 @@ CREATE TABLE IF NOT EXISTS easy_at_global (
   xid VARCHAR(128) PRIMARY KEY,
   name VARCHAR(256) NOT NULL,
   status VARCHAR(32) NOT NULL,
-  timeout_at TIMESTAMP NOT NULL,
+  timeout_at DATETIME(3) NOT NULL,
   retry_count INT NOT NULL DEFAULT 0,
-  next_retry_at TIMESTAMP NULL,
+  next_retry_at DATETIME(3) NULL DEFAULT NULL,
   version BIGINT NOT NULL DEFAULT 0,
   owner VARCHAR(128) NULL,
-  lease_until TIMESTAMP NULL,
-  created_at TIMESTAMP NOT NULL,
-  updated_at TIMESTAMP NOT NULL,
+  lease_until DATETIME(3) NULL DEFAULT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
   INDEX idx_easy_at_global_recovery (status, next_retry_at)
 ) ENGINE=InnoDB;
 
@@ -25,8 +25,8 @@ CREATE TABLE IF NOT EXISTS easy_at_undo_log (
   before_image LONGBLOB NULL,
   after_image LONGBLOB NULL,
   status VARCHAR(32) NOT NULL,
-  created_at TIMESTAMP NOT NULL,
-  updated_at TIMESTAMP NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
   INDEX idx_easy_at_undo_xid (xid)
 ) ENGINE=InnoDB;
 
@@ -35,8 +35,8 @@ CREATE TABLE IF NOT EXISTS easy_at_lock (
   table_name VARCHAR(128) NOT NULL,
   pk_value VARCHAR(512) NOT NULL,
   xid VARCHAR(128) NOT NULL,
-  lease_until TIMESTAMP NOT NULL,
-  created_at TIMESTAMP NOT NULL,
+  lease_until DATETIME(3) NOT NULL,
+  created_at DATETIME(3) NOT NULL,
   PRIMARY KEY(resource_id, table_name, pk_value),
   INDEX idx_easy_at_lock_xid (xid)
 ) ENGINE=InnoDB;
@@ -50,8 +50,8 @@ CREATE TABLE IF NOT EXISTS easy_at_branch (
   callback_url VARCHAR(512),
   sequence INT NOT NULL,
   retry_count INT NOT NULL DEFAULT 0,
-  next_retry_at TIMESTAMP NULL,
-  created_at TIMESTAMP NOT NULL,
-  updated_at TIMESTAMP NOT NULL,
+  next_retry_at DATETIME(3) NULL DEFAULT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
   INDEX idx_easy_at_branch_xid (xid)
 ) ENGINE=InnoDB;

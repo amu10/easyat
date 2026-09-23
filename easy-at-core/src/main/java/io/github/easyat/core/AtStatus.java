@@ -9,8 +9,8 @@ import java.util.Set;
 /**
  * Global AT transaction status and its legal state transitions.
  *
- * <p>All status changes must go through a compare-and-set ({@code transition}) so that
- * multiple recovery instances cannot drive the same transaction forward at the same time.
+ * <p>All status changes must go through a compare-and-set ({@code transition}) so that multiple
+ * recovery instances cannot drive the same transaction forward at the same time.
  */
 public enum AtStatus {
     ACTIVE,
@@ -19,14 +19,19 @@ public enum AtStatus {
     ROLLING_BACK,
     ROLLED_BACK,
     ROLLBACK_FAILED,
-    /** A branch found the current row no longer equals the after-image; needs human intervention. */
+    /**
+     * A branch found the current row no longer equals the after-image; needs human intervention.
+     */
     DIRTY_WRITE,
     /** Exhausted automatic retries; needs human intervention. */
     MANUAL_INTERVENTION;
 
-    private static final Map<AtStatus, Set<AtStatus>> TRANSITIONS = new HashMap<AtStatus, Set<AtStatus>>();
+    private static final Map<AtStatus, Set<AtStatus>> TRANSITIONS =
+            new HashMap<AtStatus, Set<AtStatus>>();
+
     static {
-        TRANSITIONS.put(ACTIVE, EnumSet.of(COMMITTING, ROLLING_BACK, DIRTY_WRITE, MANUAL_INTERVENTION));
+        TRANSITIONS.put(
+                ACTIVE, EnumSet.of(COMMITTING, ROLLING_BACK, DIRTY_WRITE, MANUAL_INTERVENTION));
         TRANSITIONS.put(COMMITTING, EnumSet.of(COMMITTED));
         TRANSITIONS.put(ROLLING_BACK, EnumSet.of(ROLLED_BACK, ROLLBACK_FAILED, DIRTY_WRITE));
         TRANSITIONS.put(ROLLBACK_FAILED, EnumSet.of(ROLLING_BACK, MANUAL_INTERVENTION));
@@ -57,6 +62,8 @@ public enum AtStatus {
 
     public static Set<AtStatus> legalTargets(AtStatus from) {
         Set<AtStatus> allowed = TRANSITIONS.get(from);
-        return allowed == null ? Collections.<AtStatus>emptySet() : Collections.unmodifiableSet(allowed);
+        return allowed == null
+                ? Collections.<AtStatus>emptySet()
+                : Collections.unmodifiableSet(allowed);
     }
 }

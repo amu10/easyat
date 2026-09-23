@@ -2,13 +2,14 @@ spring:
   application:
     name: easy-at-example
   datasource:
-    url: jdbc:h2:mem:easyat_example;MODE=MySQL;DB_CLOSE_DELAY=-1
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
+    url: jdbc:mysql://localhost:3306/easyat01?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: root
+    password: root
   sql:
     init:
       mode: always
+      encoding: UTF-8
 
 server:
   port: 18080

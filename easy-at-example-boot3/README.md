@@ -1,16 +1,24 @@
 # easyAt Spring Boot 3 示例
 
-该示例使用 H2 和 JDBC Repository/Lock，演示同一数据库中的转账提交与异常回滚。
+该示例使用本机 MySQL 和 JDBC Repository/Lock，演示同一数据库中的转账提交与异常回滚。
+
+## 准备数据库
+
+示例默认连接 `localhost:3306/easyat01`，用户名和密码均为 `root`。
+
+先创建数据库：
+
+```sql
+CREATE DATABASE IF NOT EXISTS easyat01
+  DEFAULT CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+```
+
+应用启动时会自动执行 `src/main/resources/schema.sql`。该脚本会重建示例表，因此只应用于本地演示环境。
 
 ## 启动
 
-在项目根目录执行：
-
-```shell
-mvn -pl easy-at-example-boot3 -am spring-boot:run
-```
-
-若 Maven 将 `spring-boot:run` 错误应用到聚合模块，可先构建，再进入示例目录启动：
+先在项目根目录安装各模块，再进入示例目录启动：
 
 ```shell
 mvn install -DskipTests

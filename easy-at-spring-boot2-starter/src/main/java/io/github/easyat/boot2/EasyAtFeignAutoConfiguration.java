@@ -8,8 +8,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-@Configuration(proxyBeanMethods=false)
-@ConditionalOnClass(name="feign.RequestInterceptor")
+@Configuration(proxyBeanMethods = false)
+@ConditionalOnClass(name = "feign.RequestInterceptor")
 public class EasyAtFeignAutoConfiguration {
-    @Bean @ConditionalOnMissingBean EasyAtFeignInterceptor easyAtFeignInterceptor(HmacSigner signer,EasyAtProperties props){return new EasyAtFeignInterceptor(signer,props.getApplicationName());}
+    @Bean
+    @ConditionalOnMissingBean
+    EasyAtFeignInterceptor easyAtFeignInterceptor(HmacSigner signer, EasyAtProperties props) {
+        return new EasyAtFeignInterceptor(signer, props.getApplicationName());
+    }
 }

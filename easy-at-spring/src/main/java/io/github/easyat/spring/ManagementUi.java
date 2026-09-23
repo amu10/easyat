@@ -16,12 +16,17 @@ public final class ManagementUi {
 
     private static final String HTML = load();
 
-    /** @return the management console HTML, or a minimal fallback if the resource is missing. */
-    public static String page() { return HTML; }
+    /**
+     * @return the management console HTML, or a minimal fallback if the resource is missing.
+     */
+    public static String page() {
+        return HTML;
+    }
 
     private static String load() {
         try (InputStream in = ManagementUi.class.getResourceAsStream("/management-ui.html")) {
-            if (in == null) return "<html><body>easyAt management UI resource missing</body></html>";
+            if (in == null)
+                return "<html><body>easyAt management UI resource missing</body></html>";
             return new String(readAll(in), StandardCharsets.UTF_8);
         } catch (IOException e) {
             return "<html><body>easyAt management UI unavailable</body></html>";

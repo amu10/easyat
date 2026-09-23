@@ -1,12 +1,11 @@
 package io.github.easyat.jdbc;
 
-import io.github.easyat.core.*;
-import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
+import io.github.easyat.core.*;
 import java.util.LinkedHashMap;
 import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
 
 /**
  * Validates the pluggable SPI surface of {@link JacksonUndoDataCodec}: the {@link UndoDataMasker}
@@ -16,7 +15,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class JacksonUndoDataCodecTest {
     private static final UndoContext CTX = new UndoContext("res", "account");
 
-    @Test void maskerHidesSensitiveColumnsInDiagnostics() {
+    @Test
+    void maskerHidesSensitiveColumnsInDiagnostics() {
         RowImage image = new RowImage(map("id", 1L, "ssn", "123-45-6789"));
         JacksonUndoDataCodec codec = new JacksonUndoDataCodec(null, new TestMasker());
         String diag = codec.toDiagnosticString(image, CTX);
@@ -25,7 +25,8 @@ class JacksonUndoDataCodecTest {
         assertFalse(diag.contains("123-45-6789"), "plain ssn must never appear: " + diag);
     }
 
-    @Test void encryptorRoundTripsRowImage() {
+    @Test
+    void encryptorRoundTripsRowImage() {
         RowImage image = new RowImage(map("id", 1L, "name", "alice"));
         JacksonUndoDataCodec codec = new JacksonUndoDataCodec(new TestEncryptor());
         byte[] encoded = codec.encodeRowImage(image, CTX);
@@ -35,7 +36,8 @@ class JacksonUndoDataCodecTest {
         assertEquals(image.getColumns(), decoded.getColumns());
     }
 
-    @Test void nullImageIsSafe() {
+    @Test
+    void nullImageIsSafe() {
         JacksonUndoDataCodec codec = new JacksonUndoDataCodec(new TestEncryptor());
         assertNull(codec.encodeRowImage(null, CTX));
         assertNull(codec.decodeRowImage(null, CTX));
@@ -48,17 +50,26 @@ class JacksonUndoDataCodecTest {
     }
 
     static final class TestMasker implements UndoDataMasker {
-        public boolean shouldMask(String r, String t, String c) { return "ssn".equals(c); }
-        public String mask(String r, String t, String c, Object v) { return "***"; }
+        public boolean shouldMask(String r, String t, String c) {
+            return "ssn".equals(c);
+        }
+
+        public String mask(String r, String t, String c, Object v) {
+            return "***";
+        }
     }
 
     static final class TestEncryptor implements UndoDataEncryptor {
-        public boolean isEnabled() { return true; }
+        public boolean isEnabled() {
+            return true;
+        }
+
         public byte[] encrypt(String r, String t, String c, byte[] p) {
             byte[] o = new byte[p.length];
             for (int i = 0; i < p.length; i++) o[i] = (byte) (p[i] ^ 0x5A);
             return o;
         }
+
         public byte[] decrypt(String r, String t, String c, byte[] p) {
             byte[] o = new byte[p.length];
             for (int i = 0; i < p.length; i++) o[i] = (byte) (p[i] ^ 0x5A);

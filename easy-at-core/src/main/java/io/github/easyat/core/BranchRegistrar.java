@@ -9,7 +9,11 @@ public interface BranchRegistrar {
     /** Register a branch for (xid, resourceId) if not already registered. Must be idempotent. */
     void register(String xid, String resourceId);
 
-    BranchRegistrar NOOP = new BranchRegistrar() {
-        @Override public void register(String xid, String resourceId) { /* no-op */ }
-    };
+    BranchRegistrar NOOP =
+            new BranchRegistrar() {
+                @Override
+                public void register(String xid, String resourceId) {
+                    /* no-op */
+                }
+            };
 }

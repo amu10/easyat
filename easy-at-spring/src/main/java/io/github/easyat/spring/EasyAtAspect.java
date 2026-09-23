@@ -2,20 +2,19 @@ package io.github.easyat.spring;
 
 import io.github.easyat.annotation.EasyAtTransactional;
 import io.github.easyat.core.*;
+import java.lang.reflect.Method;
 import org.aspectj.lang.*;
 import org.aspectj.lang.annotation.*;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.core.annotation.Order;
 
-import java.lang.reflect.Method;
-
 /**
- * Runs as the OUTER aspect (high precedence) so the Spring {@code @Transactional} interceptor
- * opens the local transaction inside the easyAt global transaction. Business DML and the undo
- * log therefore share the same local database transaction.
+ * Runs as the OUTER aspect (high precedence) so the Spring {@code @Transactional} interceptor opens
+ * the local transaction inside the easyAt global transaction. Business DML and the undo log
+ * therefore share the same local database transaction.
  *
- * <p>After the local commit/rollback it drives any registered branches through the
- * {@link BranchCoordinator}, so cross-service commit/rollback is coordinated from here.
+ * <p>After the local commit/rollback it drives any registered branches through the {@link
+ * BranchCoordinator}, so cross-service commit/rollback is coordinated from here.
  */
 @Aspect
 @Order(100)
@@ -40,7 +39,10 @@ public final class EasyAtAspect {
         if (AtContext.active()) return p.proceed();
         Method m = ((MethodSignature) p.getSignature()).getMethod();
         EasyAtTransactional a = m.getAnnotation(EasyAtTransactional.class);
-        String name = a.name().isEmpty() ? m.getDeclaringClass().getSimpleName() + "." + m.getName() : a.name();
+        String name =
+                a.name().isEmpty()
+                        ? m.getDeclaringClass().getSimpleName() + "." + m.getName()
+                        : a.name();
         // 开全局事务：持久化 ACTIVE 行 + 绑定 XID 到线程上下文
         AtTransaction tx = manager.begin(name, a.timeout());
         try {
