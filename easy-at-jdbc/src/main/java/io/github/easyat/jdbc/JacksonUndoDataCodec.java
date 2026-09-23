@@ -80,6 +80,8 @@ public final class JacksonUndoDataCodec implements UndoDataCodec {
 
     private JsonNode encodeValue(Object value,String column,UndoContext ctx){
         JsonNode node=toNode(value);
+        // 列级加密：开启时把密文以 {@code {"@t":"enc","@v":base64,"@c":列名}} 标签节点写入 JSON，
+        // 解密时据此还原明文。加密在落库时进行，明文不出现在存储层。
         if(encryptor!=null&&encryptor.isEnabled()&&column!=null){
             try{ byte[] plain=mapper.writeValueAsBytes(node);
                  byte[] cipher=encryptor.encrypt(ctx.getResourceId(),ctx.getTableName(),column,plain);
@@ -115,6 +117,8 @@ public final class JacksonUndoDataCodec implements UndoDataCodec {
         if(v instanceof java.util.Date) return tagged("ud",Long.toString(((java.util.Date)v).getTime()));
         if(v instanceof Blob){ try{return tagged("blob",Base64.getEncoder().encodeToString(readBytes((Blob)v)));}catch(SQLException e){throw new AtException("Cannot read blob",e);} }
         if(v instanceof Clob){ try{return tagged("clob",readString((Clob)v));}catch(SQLException e){throw new AtException("Cannot read clob",e);} }
+        // 兜底：无法识别的类型退回 Java 原生序列化（@t=java）。安全注意：Java 反序列化对
+        // 不可信输入是 RCE 面，生产应保证 undo 数据只来自受信存储层，或替换为白名单化方案。
         return tagged("java",Base64.getEncoder().encodeToString(JavaSerializationUndoDataCodec.serialize(v)));
     }
     private Object fromNode(JsonNode n){

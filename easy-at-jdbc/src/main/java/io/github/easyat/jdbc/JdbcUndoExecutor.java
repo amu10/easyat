@@ -11,6 +11,10 @@ public final class JdbcUndoExecutor implements UndoExecutor {
   private final Map<String,DataSource> resources;
   public JdbcUndoExecutor(Map<String,DataSource> resources){this.resources=new HashMap<String,DataSource>(resources);}
 
+  /**
+   * 执行一条 undo（补偿）SQL。执行前先做脏写校验（{@link #assertNoDirtyWrite}），
+   * 通过 {@link AtContext#beginUndo()} 标记，避免 undo SQL 本身又被 AtDataSource 拦截。
+   */
   @Override public void rollback(UndoRecord record)throws Exception{
     DataSource ds=resources.get(record.getResourceId());
     if(ds==null)throw new AtException("Unknown resource: "+record.getResourceId());
@@ -25,6 +29,14 @@ public final class JdbcUndoExecutor implements UndoExecutor {
     }finally{AtContext.endUndo();}
   }
 
+  /**
+   * 脏写校验（DESIGN.md §7.2）：回滚前把当前行与 after image 逐列比对。
+   * <ul>
+   *   <li>当前行 == after image → 允许 undo；</li>
+   *   <li>当前行 != after image（或行缺失/多出）→ 抛 {@link DirtyWriteException}，
+   *       拒绝覆盖并发修改的数据，交人工处理。</li>
+   * </ul>
+   */
   private void assertNoDirtyWrite(Connection c,UndoRecord record)throws SQLException {
     String sql="SELECT * FROM "+record.getTableName()+" WHERE "+record.getPrimaryKeyColumn()+"=?";
     try(PreparedStatement p=c.prepareStatement(sql)){

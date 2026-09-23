@@ -16,7 +16,23 @@ import net.sf.jsqlparser.statement.update.UpdateSet;
 import java.sql.*;
 import java.util.*;
 
-/** Generates undo for deliberately conservative, single-row SQL forms parsed by JSqlParser. */
+/**
+ * 用 JSqlParser 解析受限的单行 DML，并生成对应的 before/after image 与 undo SQL。
+ *
+ * <p>这是 AT 模式「正确性」的核心。它刻意采用<b>保守策略</b>：只接受带主键精确条件的
+ * 单行 INSERT/UPDATE/DELETE，且值必须是 {@code ?} 占位符；任何多表、批量、子查询、
+ * 函数表达式、别名表、无主键表都直接抛 {@link UnsupportedAtSqlException}，
+ * 绝不允许生成「猜测性」的 undo log（DESIGN.md §7.5）。
+ *
+ * <p>三种 DML 的 undo 逻辑（对应 DESIGN.md §7）：
+ * <ul>
+ *   <li><b>UPDATE</b>：before image 是被更新行的旧值，undo = 反向 UPDATE 把这些列改回旧值；</li>
+ *   <li><b>DELETE</b>：before image 是整行，undo = 按列 INSERT 回原行；</li>
+ *   <li><b>INSERT</b>：after image 是新插入行，undo = 按主键 DELETE（首版要求 INSERT 显式携带主键）。</li>
+ * </ul>
+ *
+ * <p>undo SQL 通过 {@link AtTransactionManager#append} 走连接绑定路径写入，与业务 DML 同连接。
+ */
 final class SqlUndoLogGenerator {
     private final String resourceId; private final AtTransactionManager manager; private final GlobalLockManager locks; private final LocalTransactionBridge bridge; private final AtSqlDialect dialect; private final BranchRegistrar registrar; private Runnable afterCommitHook;
     SqlUndoLogGenerator(String resourceId,AtTransactionManager manager,GlobalLockManager locks,LocalTransactionBridge bridge){this(resourceId,manager,locks,bridge,new GenericAtSqlDialect(),BranchRegistrar.NOOP);}
@@ -32,13 +48,16 @@ final class SqlUndoLogGenerator {
         throw unsupported(sql);
     }
     private Capture update(Connection c,String xid,Update u,Map<Integer,Object> p)throws SQLException{
+        // 拒绝多表 JOIN / LIMIT / ORDER BY 等复杂形态，只保留单表单行
         reject(u.getWithItemsList()!=null||u.getFromItem()!=null||notEmpty(u.getJoins())||u.getLimit()!=null||notEmpty(u.getOrderByElements()),u.toString());
         Table parsed=u.getTable();String rawTable=tableName(parsed);if(internal(rawTable))return null;
         String tableRef=dialect.quoteTable(identifier(parsed.getSchemaName()),parsed.getName());
         List<String> columns=new ArrayList<String>();
         for(UpdateSet set:u.getUpdateSets()){reject(set.getColumns().size()!=1||set.getValues().size()!=1||!(set.getValue(0) instanceof JdbcParameter),u.toString());columns.add(set.getColumn(0).getColumnName());}
         Where where=where(u.getWhere(),u.toString());Object key=require(p,columns.size()+1);assertPrimaryKey(c,parsed,where.column);lock(rawTable,key,xid);
+        // 查 before image（被更新列的旧值）
         RowImage before=select(c,rawTable,columns,where.column,key);if(before==null)throw new AtException("UPDATE target does not exist: "+rawTable+"."+key);
+        // undo = 反向 UPDATE，把每列改回旧值
         StringBuilder undo=new StringBuilder("UPDATE ").append(tableRef).append(" SET ");Object[] values=new Object[columns.size()+1];
         for(int i=0;i<columns.size();i++){if(i>0)undo.append(',');undo.append(dialect.quoteIdentifier(columns.get(i))).append("=?");values[i]=column(before,columns.get(i));}
         undo.append(" WHERE ").append(dialect.quoteIdentifier(where.column)).append("=?");values[values.length-1]=key;
@@ -49,6 +68,7 @@ final class SqlUndoLogGenerator {
         Table parsed=d.getTable();String rawTable=tableName(parsed);if(internal(rawTable))return null;
         String tableRef=dialect.quoteTable(identifier(parsed.getSchemaName()),parsed.getName());
         Where where=where(d.getWhere(),d.toString());Object key=require(p,1);assertPrimaryKey(c,parsed,where.column);lock(rawTable,key,xid);
+        // before image = 被删行的完整内容，undo = 按列 INSERT 回原行
         RowImage before=selectAll(c,rawTable,where.column,key);if(before==null)throw new AtException("DELETE target does not exist: "+rawTable+"."+key);
         List<String> cols=new ArrayList<String>(before.getColumns().keySet());StringBuilder undo=new StringBuilder("INSERT INTO ").append(tableRef).append(" (");
         for(int i=0;i<cols.size();i++){if(i>0)undo.append(',');undo.append(dialect.quoteIdentifier(cols.get(i)));}
@@ -61,10 +81,14 @@ final class SqlUndoLogGenerator {
         String tableRef=dialect.quoteTable(identifier(parsed.getSchemaName()),parsed.getName());
         List<String> columns=new ArrayList<String>();for(Column column:in.getColumns())columns.add(column.getColumnName());
         List<?> values=in.getValues().getExpressions();reject(columns.size()!=values.size(),in.toString());for(Object value:values)reject(!(value instanceof JdbcParameter),in.toString());
+        // INSERT 必须显式携带主键，否则无法生成按主键 DELETE 的 undo
         String pk=findPrimaryKey(c,parsed);int pkIndex=indexOf(columns,pk);if(pkIndex<0)throw new AtException("INSERT must explicitly include primary key "+pk+" for AT undo");Object key=require(p,pkIndex+1);lock(rawTable,key,xid);
+        // undo = 按主键 DELETE（before image 为 null，after image 在 after() 里回填）
         UndoRecord r=record(xid,tableRef,columns.get(pkIndex),key,"DELETE FROM "+tableRef+" WHERE "+dialect.quoteIdentifier(columns.get(pkIndex))+"=?",new Object[]{key},null);manager.append(c,r);return new Capture(r,rawTable,columns.get(pkIndex),key);
     }
+    /** DML 执行成功后回填 after image；若存在本地事务则在提交后再触发 afterCommit 钩子（分支提交用）。 */
     void after(Connection c,Capture capture)throws SQLException{if(capture==null)return;RowImage image=selectAll(c,capture.table,capture.pk,capture.key);if(image==null&&capture.record.getBeforeImage()==null)throw new AtException("INSERT did not create expected row: "+capture.table+"."+capture.key);manager.updateUndo(c,capture.record.getXid(),capture.record.getId(),image);if(bridge!=null&&bridge.isActive()&&afterCommitHook!=null)bridge.afterCommit(afterCommitHook);}
+    /** DML 执行失败时丢弃已写入的 undo 记录，避免残留脏 undo。 */
     void abort(Connection c,Capture capture){if(capture!=null)manager.discardUndo(c,capture.record.getXid(),capture.record.getId());}
     private UndoRecord record(String xid,String table,String pk,Object key,String sql,Object[] values,RowImage before){UndoRecord r=new UndoRecord(UUID.randomUUID().toString(),xid,resourceId,stripQuotes(table),pk,key,sql,values);r.setBeforeImage(before);return r;}
     private void lock(String table,Object key,String xid){if(locks!=null)locks.acquire(resourceId,table,String.valueOf(key),xid);}

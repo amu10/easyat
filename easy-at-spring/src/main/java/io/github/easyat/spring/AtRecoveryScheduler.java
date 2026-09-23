@@ -36,10 +36,12 @@ public final class AtRecoveryScheduler implements AutoCloseable {
   private void recoverSafely(){
     try{
       long now=System.currentTimeMillis();
+      // 拉取一批「待恢复」事务：超时的 ACTIVE、卡在 ROLLING_BACK 的、以及到点重试的 ROLLBACK_FAILED
       List<AtTransaction> transactions=repository.recoverable(now,batchSize);
       if(metrics!=null)metrics.setRecoveryQueueDepth(transactions.size());
       Timer.Sample sample=metrics!=null?metrics.startRecovery():null;
       for(AtTransaction tx:transactions){
+        // 先抢恢复租约，抢不到说明别的实例在处理，直接跳过——这是多实例不重复恢复的关键
         if(!repository.claimLease(tx.getXid(),owner,now+leaseMillis,now))continue; // owned by another instance
         try{
             manager.recover(tx);

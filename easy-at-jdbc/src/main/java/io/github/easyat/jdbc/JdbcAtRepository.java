@@ -20,12 +20,22 @@ public final class JdbcAtRepository implements ConnectionBoundAtRepository {
         try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement(sql)){p.setString(1,xid);try(ResultSet r=p.executeQuery()){if(!r.next())return Optional.empty();AtTransaction tx=new AtTransaction(r.getString(1),r.getString(2),r.getTimestamp(10).getTime(),r.getTimestamp(4).getTime());Timestamp next=r.getTimestamp(6);tx.restore(AtStatus.valueOf(r.getString(3)),r.getInt(5),next==null?0:next.getTime());tx.setVersion(r.getLong(7));String owner=r.getString(8);if(owner!=null)tx.setOwner(owner);Timestamp lease=r.getTimestamp(9);if(lease!=null)tx.setLeaseUntil(lease.getTime());loadUndo(c,tx);return Optional.of(tx);}}catch(SQLException e){throw new AtException("Cannot read AT transaction",e);}
     }
     @Override public void save(AtTransaction tx){
+        // 注意：save 只重写 undo 记录与重试簿记，不用于变更状态——状态变更必须走 transition 的 CAS。
         try(Connection c=dataSource.getConnection()){boolean auto=c.getAutoCommit();try{c.setAutoCommit(false);try(PreparedStatement d=c.prepareStatement("DELETE FROM easy_at_undo_log WHERE xid=?")){d.setString(1,tx.getXid());d.executeUpdate();}for(UndoRecord undo:tx.getUndoRecords())insertUndo(c,undo);try(PreparedStatement u=c.prepareStatement("UPDATE easy_at_global SET status=?,version=?,owner=?,lease_until=?,retry_count=?,next_retry_at=?,updated_at=? WHERE xid=?")){u.setString(1,tx.getStatus().name());u.setLong(2,tx.getVersion());String owner=tx.getOwner();u.setString(3,owner==null?"":owner);u.setTimestamp(4,tx.getLeaseUntil()>0?new Timestamp(tx.getLeaseUntil()):null);u.setInt(5,tx.getRetries());u.setTimestamp(6,timestamp(tx.getNextRetryAt()));u.setTimestamp(7,new Timestamp(System.currentTimeMillis()));u.setString(8,tx.getXid());u.executeUpdate();}c.commit();}catch(Exception e){c.rollback();if(e instanceof AtException)throw (AtException)e;throw new AtException("Cannot save AT transaction",e);}finally{c.setAutoCommit(auto);}}catch(SQLException e){throw new AtException("Cannot save AT transaction",e);}
     }
+    /**
+     * 状态迁移的 CAS（DESIGN.md §4.1）：以「期望状态 + 版本号」作为 WHERE 条件，
+     * 成功则 {@code version = version + 1}。并发场景下只有一个实例能命中并更新，
+     * 其余返回 0（false），从而避免多实例重复驱动同一事务。
+     */
     @Override public boolean transition(String xid,AtStatus expected,long expectedVersion,AtStatus next){
         String sql="UPDATE easy_at_global SET status=?,version=version+1,updated_at=? WHERE xid=? AND status=? AND version=?";
         try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement(sql)){p.setString(1,next.name());p.setTimestamp(2,new Timestamp(System.currentTimeMillis()));p.setString(3,xid);p.setString(4,expected.name());p.setLong(5,expectedVersion);return p.executeUpdate()==1;}catch(SQLException e){throw new AtException("Cannot transition AT transaction "+xid,e);}
     }
+    /**
+     * 原子领取恢复租约：仅当「非终态 且 (无主 或 我是主 或 租约已过期)」时更新 owner/lease_until。
+     * 这是多实例恢复不重复处理的根基——抢不到租约的实例直接跳过。
+     */
     @Override public boolean claimLease(String xid,String owner,long leaseUntil,long now){
         String sql="UPDATE easy_at_global SET owner=?,lease_until=? WHERE xid=? AND status NOT IN('COMMITTED','ROLLED_BACK','MANUAL_INTERVENTION','DIRTY_WRITE') AND (owner IS NULL OR owner=? OR lease_until<?)";
         try(Connection c=dataSource.getConnection();PreparedStatement p=c.prepareStatement(sql)){p.setString(1,owner);p.setTimestamp(2,new Timestamp(leaseUntil));p.setString(3,xid);p.setString(4,owner);p.setTimestamp(5,new Timestamp(now));return p.executeUpdate()==1;}catch(SQLException e){throw new AtException("Cannot claim recovery lease "+xid,e);}

@@ -14,11 +14,21 @@ public final class JdbcGlobalLockManager implements GlobalLockManager, AutoClose
     public JdbcGlobalLockManager(DataSource dataSource,long leaseMillis){this(dataSource,leaseMillis,0L);}
     public JdbcGlobalLockManager(DataSource dataSource,long leaseMillis,long waitMillis){
         this.dataSource=dataSource;this.leaseMillis=leaseMillis;this.waitMillis=waitMillis;
+        // 单线程续租调度器：周期 = lease/3，确保锁不会因业务过长而意外过期
         this.renewer=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"easy-at-lock-renew");t.setDaemon(true);return t;});
         long period=Math.max(1000L,leaseMillis/3);
         this.renewer.scheduleWithFixedDelay(this::renewAll,period,period,TimeUnit.MILLISECONDS);
     }
     @Override public void acquire(String resource,String table,String key,String xid){acquire(resource,table,key,xid,waitMillis);}
+    /**
+     * 获取全局行锁。核心是「{@code easy_at_lock} 表主键唯一约束」充当原子冲突点：
+     * <ol>
+     *   <li>{@link #tryInsert} 尝试插入锁行，插入成功即持锁；</li>
+     *   <li>同 XID 重入则直接续租；</li>
+     *   <li>他人持锁且租约未过期 → 按 waitMillis 短暂自旋等待，超时抛冲突；</li>
+     *   <li>租约过期 → 查全局事务状态：已收敛则安全清除陈旧锁，仍在途则拒绝接管（防误删）。</li>
+     * </ol>
+     */
     @Override public void acquire(String resource,String table,String key,String xid,long waitMillis){
         long deadline=waitMillis<=0?0:System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(waitMillis);
         while(!closed.get()){

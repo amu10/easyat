@@ -9,6 +9,11 @@ import java.lang.reflect.*;
  * is absent. The returned {@code WebClientCustomizer} is only created when WebClient is on the
  * runtime classpath; otherwise {@link #createCustomizer} returns {@code null} and Spring simply
  * skips the bean.
+ *
+ * <p><b>为什么用反射：</b>离线构建环境没有 {@code spring-webflux} 依赖，若直接 import
+ * {@code ExchangeFilterFunction} 等类型会让编译失败。这里通过 {@code Class.forName} +
+ * JDK 动态代理，在运行时才解析 WebClient 的类与方法，因此对 webflux 的依赖是「可选的」：
+ * classpath 里有则自动激活，没有则静默跳过，编译期零依赖。
  */
 public final class WebClientPropagator {
     private WebClientPropagator() {}

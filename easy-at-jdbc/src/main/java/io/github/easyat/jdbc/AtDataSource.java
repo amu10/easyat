@@ -8,7 +8,22 @@ import java.sql.*;
 import java.util.*;
 import java.util.logging.Logger;
 
-/** JDBC DataSource proxy that writes undo logs before executing supported DML. */
+/**
+ * JDBC DataSource 代理，是 AT 事务「拦截点」。
+ *
+ * <p>它用 JDK 动态代理包装了 {@link Connection} 与 {@link PreparedStatement}，在受支持的单行
+ * DML 真正执行<b>之前</b>，先完成三件 AT 前置动作，再由 {@link SqlUndoLogGenerator} 生成并
+ * 持久化 undo log（见 {@link AtContext#active()} 与 {@link AtContext#undoing()} 两个开关）：
+ *
+ * <ol>
+ *   <li>校验是否存在 Spring 本地事务（当 {@code requireLocalTransaction=true} 时）；</li>
+ *   <li>{@code capture}：解析 SQL → 查 before image → 抢全局行锁 → 写 undo log；</li>
+ *   <li>执行原始 DML 后 {@code after}：回写 after image（成功）或 {@code abort}（失败丢弃 undo）。</li>
+ * </ol>
+ *
+ * <p>注意：代理只拦截带占位符的 {@code prepareStatement(String)} 路径；
+ * 框架自身的 undo SQL 通过 {@link AtContext#undoing()} 标记被显式放行，不重复代理。
+ */
 public final class AtDataSource implements DataSource {
     private final String resourceId; private final DataSource delegate; private final SqlUndoLogGenerator generator; private final LocalTransactionBridge bridge; private final boolean requireLocalTransaction;
     public AtDataSource(String resourceId, DataSource delegate, AtTransactionManager manager, GlobalLockManager locks) {
@@ -38,11 +53,14 @@ public final class AtDataSource implements DataSource {
         StatementHandler(PreparedStatement target,String sql){this.target=target;this.sql=sql;}
         public Object invoke(Object proxy,Method method,Object[] args)throws Throwable{
             String name=method.getName();
+            // 记录 setXxx 传入的占位符参数，供 SQL 生成器拼装 undo 时定位主键与列值
             if(name.startsWith("set")&&args!=null&&args.length>=2&&args[0] instanceof Integer){params.put((Integer)args[0],args[1]);return call(target,method,args);}
             if(name.equals("clearParameters")){params.clear();return call(target,method,args);}
+            // 仅当「处于 AT 事务中」且「当前不是在执行框架自己的 undo SQL」时才介入
             if((name.equals("executeUpdate")||name.equals("execute")||name.equals("executeLargeUpdate"))&&AtContext.active()&&!AtContext.undoing()){
                 if(requireLocalTransaction&&!bridge.isActive())throw new AtException("easyAt requires a Spring local transaction on resource '"+resourceId+"'; annotate the method with @Transactional");
                 Connection connection=target.getConnection();
+                // capture：解析 SQL、查 before image、抢全局锁、写 undo log
                 SqlUndoLogGenerator.Capture capture=generator.capture(connection,sql,params);
                 try { Object result=call(target,method,args); generator.after(connection,capture); return result; }
                 catch(Throwable failure){try{generator.abort(connection,capture);}catch(Throwable cleanup){failure.addSuppressed(cleanup);}throw failure;}
