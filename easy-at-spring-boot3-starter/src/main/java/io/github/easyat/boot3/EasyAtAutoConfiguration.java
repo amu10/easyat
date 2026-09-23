@@ -79,7 +79,7 @@ public class EasyAtAutoConfiguration {
     }
 
     @Bean EasyAtAspect easyAtAspect(AtTransactionManager m,BranchCoordinator c,EasyAtMetrics metrics){return new EasyAtAspect(m,c,metrics);}
-    @Bean static AtDataSourceBeanPostProcessor easyAtDataSourceBeanPostProcessor(AtTransactionManager m,GlobalLockManager l,ObjectProvider<BranchRepository> branchRepo,EasyAtProperties p){
+    @Bean static AtDataSourceBeanPostProcessor easyAtDataSourceBeanPostProcessor(ObjectProvider<AtTransactionManager> m,ObjectProvider<GlobalLockManager> l,ObjectProvider<BranchRepository> branchRepo,EasyAtProperties p){
         BranchRegistrar registrar=new DefaultBranchRegistrar(() -> branchRepo.getIfAvailable(),p.getApplicationName());
         return new AtDataSourceBeanPostProcessor(m,l,registrar,p);
     }

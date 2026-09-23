@@ -36,6 +36,10 @@ public final class AtDataSource implements DataSource {
         this.resourceId=resourceId;this.delegate=delegate;this.bridge=bridge;this.requireLocalTransaction=requireLocalTransaction;
         this.generator=new SqlUndoLogGenerator(resourceId,manager,locks,bridge,registrar);
     }
+    public AtDataSource(String resourceId,DataSource delegate,java.util.function.Supplier<AtTransactionManager> manager,java.util.function.Supplier<GlobalLockManager> locks,LocalTransactionBridge bridge,boolean requireLocalTransaction,BranchRegistrar registrar){
+        this.resourceId=resourceId;this.delegate=delegate;this.bridge=bridge;this.requireLocalTransaction=requireLocalTransaction;
+        this.generator=new SqlUndoLogGenerator(resourceId,manager,locks,bridge,new GenericAtSqlDialect(),registrar);
+    }
     public DataSource getDelegate(){return delegate;} public String getResourceId(){return resourceId;}
     public Connection getConnection() throws SQLException{return proxy(delegate.getConnection());}
     public Connection getConnection(String user,String password)throws SQLException{return proxy(delegate.getConnection(user,password));}

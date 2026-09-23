@@ -10,14 +10,16 @@ spring:
     init:
       mode: always
 
+server:
+  port: 18080
+
 easy-at:
   application-name: easy-at-example
   production: false
   storage:
-    type: file
-    file-dir: ./data/easy-at-example
+    type: jdbc
   lock:
-    type: file
+    type: jdbc
     wait-timeout: 1s
     lease: 30s
   recovery:

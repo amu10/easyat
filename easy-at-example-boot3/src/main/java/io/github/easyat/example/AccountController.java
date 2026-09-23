@@ -17,7 +17,7 @@ public class AccountController {
     public List<Map<String,Object>> accounts(){return jdbc.queryForList("SELECT id,balance FROM account ORDER BY id");}
 
     @PostMapping("/transfer")
-    public List<Map<String,Object>> transfer(@RequestParam long from,@RequestParam long to,@RequestParam int amount,@RequestParam(defaultValue="false") boolean fail){
+    public List<Map<String,Object>> transfer(@RequestParam("from") long from,@RequestParam("to") long to,@RequestParam("amount") int amount,@RequestParam(name="fail",defaultValue="false") boolean fail){
         transfers.transfer(from,to,amount,fail);
         return accounts();
     }

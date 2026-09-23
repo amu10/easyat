@@ -34,11 +34,12 @@ import java.util.*;
  * <p>undo SQL 通过 {@link AtTransactionManager#append} 走连接绑定路径写入，与业务 DML 同连接。
  */
 final class SqlUndoLogGenerator {
-    private final String resourceId; private final AtTransactionManager manager; private final GlobalLockManager locks; private final LocalTransactionBridge bridge; private final AtSqlDialect dialect; private final BranchRegistrar registrar; private Runnable afterCommitHook;
+    private final String resourceId; private final java.util.function.Supplier<AtTransactionManager> manager; private final java.util.function.Supplier<GlobalLockManager> locks; private final LocalTransactionBridge bridge; private final AtSqlDialect dialect; private final BranchRegistrar registrar; private Runnable afterCommitHook;
     SqlUndoLogGenerator(String resourceId,AtTransactionManager manager,GlobalLockManager locks,LocalTransactionBridge bridge){this(resourceId,manager,locks,bridge,new GenericAtSqlDialect(),BranchRegistrar.NOOP);}
     SqlUndoLogGenerator(String resourceId,AtTransactionManager manager,GlobalLockManager locks,LocalTransactionBridge bridge,AtSqlDialect dialect){this(resourceId,manager,locks,bridge,dialect,BranchRegistrar.NOOP);}
     SqlUndoLogGenerator(String resourceId,AtTransactionManager manager,GlobalLockManager locks,LocalTransactionBridge bridge,BranchRegistrar registrar){this(resourceId,manager,locks,bridge,new GenericAtSqlDialect(),registrar);}
-    SqlUndoLogGenerator(String resourceId,AtTransactionManager manager,GlobalLockManager locks,LocalTransactionBridge bridge,AtSqlDialect dialect,BranchRegistrar registrar){this.resourceId=resourceId;this.manager=manager;this.locks=locks;this.bridge=bridge;this.dialect=dialect==null?new GenericAtSqlDialect():dialect;this.registrar=registrar==null?BranchRegistrar.NOOP:registrar;}
+    SqlUndoLogGenerator(String resourceId,AtTransactionManager manager,GlobalLockManager locks,LocalTransactionBridge bridge,AtSqlDialect dialect,BranchRegistrar registrar){this(resourceId,()->manager,()->locks,bridge,dialect,registrar);}
+    SqlUndoLogGenerator(String resourceId,java.util.function.Supplier<AtTransactionManager> manager,java.util.function.Supplier<GlobalLockManager> locks,LocalTransactionBridge bridge,AtSqlDialect dialect,BranchRegistrar registrar){this.resourceId=resourceId;this.manager=manager;this.locks=locks;this.bridge=bridge;this.dialect=dialect==null?new GenericAtSqlDialect():dialect;this.registrar=registrar==null?BranchRegistrar.NOOP:registrar;}
     void setAfterCommitHook(Runnable hook){this.afterCommitHook=hook;}
     Capture capture(Connection c,String sql,Map<Integer,Object> parameters)throws SQLException{
         String xid=AtContext.xid();if(xid==null||AtContext.undoing())return null;registrar.register(xid,resourceId);Statement statement=parse(sql);
@@ -61,7 +62,7 @@ final class SqlUndoLogGenerator {
         StringBuilder undo=new StringBuilder("UPDATE ").append(tableRef).append(" SET ");Object[] values=new Object[columns.size()+1];
         for(int i=0;i<columns.size();i++){if(i>0)undo.append(',');undo.append(dialect.quoteIdentifier(columns.get(i))).append("=?");values[i]=column(before,columns.get(i));}
         undo.append(" WHERE ").append(dialect.quoteIdentifier(where.column)).append("=?");values[values.length-1]=key;
-        UndoRecord r=record(xid,tableRef,where.column,key,undo.toString(),values,before);manager.append(c,r);return new Capture(r,rawTable,where.column,key);
+        UndoRecord r=record(xid,tableRef,where.column,key,undo.toString(),values,before);manager.get().append(c,r);return new Capture(r,rawTable,where.column,key);
     }
     private Capture delete(Connection c,String xid,Delete d,Map<Integer,Object> p)throws SQLException{
         reject(d.getWithItemsList()!=null||notEmpty(d.getTables())||notEmpty(d.getUsingList())||notEmpty(d.getJoins())||d.getLimit()!=null||notEmpty(d.getOrderByElements()),d.toString());
@@ -73,7 +74,7 @@ final class SqlUndoLogGenerator {
         List<String> cols=new ArrayList<String>(before.getColumns().keySet());StringBuilder undo=new StringBuilder("INSERT INTO ").append(tableRef).append(" (");
         for(int i=0;i<cols.size();i++){if(i>0)undo.append(',');undo.append(dialect.quoteIdentifier(cols.get(i)));}
         undo.append(") VALUES (");Object[] vals=new Object[cols.size()];for(int i=0;i<cols.size();i++){if(i>0)undo.append(',');undo.append('?');vals[i]=before.getColumns().get(cols.get(i));}
-        undo.append(')');UndoRecord r=record(xid,tableRef,where.column,key,undo.toString(),vals,before);manager.append(c,r);return new Capture(r,rawTable,where.column,key);
+        undo.append(')');UndoRecord r=record(xid,tableRef,where.column,key,undo.toString(),vals,before);manager.get().append(c,r);return new Capture(r,rawTable,where.column,key);
     }
     private Capture insert(Connection c,String xid,Insert in,Map<Integer,Object> p)throws SQLException{
         reject(in.getWithItemsList()!=null||in.getColumns()==null||in.getValues()==null||in.getConflictAction()!=null||notEmpty(in.getDuplicateUpdateSets())||notEmpty(in.getSetUpdateSets()),in.toString());
@@ -84,14 +85,14 @@ final class SqlUndoLogGenerator {
         // INSERT 必须显式携带主键，否则无法生成按主键 DELETE 的 undo
         String pk=findPrimaryKey(c,parsed);int pkIndex=indexOf(columns,pk);if(pkIndex<0)throw new AtException("INSERT must explicitly include primary key "+pk+" for AT undo");Object key=require(p,pkIndex+1);lock(rawTable,key,xid);
         // undo = 按主键 DELETE（before image 为 null，after image 在 after() 里回填）
-        UndoRecord r=record(xid,tableRef,columns.get(pkIndex),key,"DELETE FROM "+tableRef+" WHERE "+dialect.quoteIdentifier(columns.get(pkIndex))+"=?",new Object[]{key},null);manager.append(c,r);return new Capture(r,rawTable,columns.get(pkIndex),key);
+        UndoRecord r=record(xid,tableRef,columns.get(pkIndex),key,"DELETE FROM "+tableRef+" WHERE "+dialect.quoteIdentifier(columns.get(pkIndex))+"=?",new Object[]{key},null);manager.get().append(c,r);return new Capture(r,rawTable,columns.get(pkIndex),key);
     }
     /** DML 执行成功后回填 after image；若存在本地事务则在提交后再触发 afterCommit 钩子（分支提交用）。 */
-    void after(Connection c,Capture capture)throws SQLException{if(capture==null)return;RowImage image=selectAll(c,capture.table,capture.pk,capture.key);if(image==null&&capture.record.getBeforeImage()==null)throw new AtException("INSERT did not create expected row: "+capture.table+"."+capture.key);manager.updateUndo(c,capture.record.getXid(),capture.record.getId(),image);if(bridge!=null&&bridge.isActive()&&afterCommitHook!=null)bridge.afterCommit(afterCommitHook);}
+    void after(Connection c,Capture capture)throws SQLException{if(capture==null)return;RowImage image=selectAll(c,capture.table,capture.pk,capture.key);if(image==null&&capture.record.getBeforeImage()==null)throw new AtException("INSERT did not create expected row: "+capture.table+"."+capture.key);manager.get().updateUndo(c,capture.record.getXid(),capture.record.getId(),image);if(bridge!=null&&bridge.isActive()&&afterCommitHook!=null)bridge.afterCommit(afterCommitHook);}
     /** DML 执行失败时丢弃已写入的 undo 记录，避免残留脏 undo。 */
-    void abort(Connection c,Capture capture){if(capture!=null)manager.discardUndo(c,capture.record.getXid(),capture.record.getId());}
+    void abort(Connection c,Capture capture){if(capture!=null)manager.get().discardUndo(c,capture.record.getXid(),capture.record.getId());}
     private UndoRecord record(String xid,String table,String pk,Object key,String sql,Object[] values,RowImage before){UndoRecord r=new UndoRecord(UUID.randomUUID().toString(),xid,resourceId,stripQuotes(table),pk,key,sql,values);r.setBeforeImage(before);return r;}
-    private void lock(String table,Object key,String xid){if(locks!=null)locks.acquire(resourceId,table,String.valueOf(key),xid);}
+    private void lock(String table,Object key,String xid){GlobalLockManager lockManager=locks==null?null:locks.get();if(lockManager!=null)lockManager.acquire(resourceId,table,String.valueOf(key),xid);}
     private static Statement parse(String sql){try{return CCJSqlParserUtil.parse(sql);}catch(JSQLParserException e){throw new UnsupportedAtSqlException("Unsupported AT SQL: "+sql,e);}}
     private static Where where(Expression expression,String sql){if(!(expression instanceof EqualsTo))throw unsupported(sql);EqualsTo equal=(EqualsTo)expression;if(!(equal.getLeftExpression() instanceof Column)||!(equal.getRightExpression() instanceof JdbcParameter))throw unsupported(sql);return new Where(((Column)equal.getLeftExpression()).getColumnName());}
     private static String findPrimaryKey(Connection c,Table table)throws SQLException{DatabaseMetaData md=c.getMetaData();String schema=identifier(table.getSchemaName()),name=identifier(table.getName());for(String candidate:new String[]{name,name.toUpperCase(Locale.ROOT),name.toLowerCase(Locale.ROOT)}){try(ResultSet rs=md.getPrimaryKeys(null,schema,candidate)){if(rs.next()){String pk=rs.getString("COLUMN_NAME");if(rs.next())throw new AtException("Composite primary keys are not supported: "+table);return pk;}}}throw new AtException("Table must have a primary key: "+table);}

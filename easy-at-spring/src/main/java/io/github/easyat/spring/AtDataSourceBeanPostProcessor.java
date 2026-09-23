@@ -6,17 +6,18 @@ import io.github.easyat.core.GlobalLockManager;
 import io.github.easyat.jdbc.AtDataSource;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.config.BeanPostProcessor;
+import org.springframework.beans.factory.ObjectProvider;
 
 import javax.sql.DataSource;
 
 /** Wraps eligible application DataSources with the easyAt JDBC proxy. */
 public final class AtDataSourceBeanPostProcessor implements BeanPostProcessor {
-    private final AtTransactionManager manager;
-    private final GlobalLockManager locks;
+    private final ObjectProvider<AtTransactionManager> manager;
+    private final ObjectProvider<GlobalLockManager> locks;
     private final BranchRegistrar registrar;
     private final EasyAtProperties properties;
 
-    public AtDataSourceBeanPostProcessor(AtTransactionManager manager,GlobalLockManager locks,BranchRegistrar registrar,EasyAtProperties properties){
+    public AtDataSourceBeanPostProcessor(ObjectProvider<AtTransactionManager> manager,ObjectProvider<GlobalLockManager> locks,BranchRegistrar registrar,EasyAtProperties properties){
         this.manager=manager;this.locks=locks;this.registrar=registrar;this.properties=properties;
     }
 
@@ -28,6 +29,6 @@ public final class AtDataSourceBeanPostProcessor implements BeanPostProcessor {
         EasyAtProperties.ResourceConfig resource=properties.getResources().get(beanName);
         if(resource!=null&&!resource.isEnabled())return bean;
         String resourceId=resource!=null&&resource.getResourceId()!=null&&!resource.getResourceId().trim().isEmpty()?resource.getResourceId().trim():beanName;
-        return new AtDataSource(resourceId,(DataSource)bean,manager,locks,new SpringTransactionBridge(),properties.isRequireLocalTransaction(),registrar);
+        return new AtDataSource(resourceId,(DataSource)bean,()->manager.getObject(),()->locks.getObject(),new SpringTransactionBridge(),properties.isRequireLocalTransaction(),registrar);
     }
 }
