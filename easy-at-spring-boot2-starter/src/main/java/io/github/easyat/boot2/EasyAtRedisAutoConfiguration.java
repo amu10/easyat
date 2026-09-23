@@ -15,12 +15,13 @@ import redis.clients.jedis.JedisPoolConfig;
             "redis.clients.jedis.JedisPool",
             "io.github.easyat.storage.redis.RedisAtRepository"
         })
-@ConditionalOnProperty(prefix = "easy-at.storage", name = "type", havingValue = "redis")
 public class EasyAtRedisAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnExpression(
+            "'${easy-at.storage.type:file}' == 'redis' || '${easy-at.lock.type:file}' == 'redis'")
     JedisPool easyAtJedisPool(EasyAtProperties props) {
-        EasyAtProperties.Storage.Redis r = props.getStorage().getRedis();
+        EasyAtProperties.Redis r = props.getRedis();
         JedisPoolConfig c = new JedisPoolConfig();
         c.setMaxTotal(r.getMaxTotal());
         return new JedisPool(
@@ -34,12 +35,14 @@ public class EasyAtRedisAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "easy-at.storage", name = "type", havingValue = "redis")
     AtRepository redisAtRepository(JedisPool pool, UndoDataCodec codec) {
         return new RedisAtRepository(pool, codec, "easy-at");
     }
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "easy-at.lock", name = "type", havingValue = "redis")
     GlobalLockManager redisAtLockManager(JedisPool pool, EasyAtProperties props) {
         return new RedisGlobalLockManager(
                 pool,
@@ -49,6 +52,7 @@ public class EasyAtRedisAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "easy-at.storage", name = "type", havingValue = "redis")
     BranchRepository redisBranchRepository(JedisPool pool) {
         return new RedisBranchRepository(pool);
     }

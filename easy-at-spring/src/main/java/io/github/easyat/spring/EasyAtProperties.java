@@ -17,6 +17,7 @@ public class EasyAtProperties {
     private boolean production = false;
 
     private final Storage storage = new Storage();
+    private final Redis redis = new Redis();
     private final Lock lock = new Lock();
     private final Sql sql = new Sql();
     private final Recovery recovery = new Recovery();
@@ -65,6 +66,11 @@ public class EasyAtProperties {
         return storage;
     }
 
+    /** Redis connection shared by Redis-backed storage and/or the Redis lock manager. */
+    public Redis getRedis() {
+        return redis;
+    }
+
     public List<String> getDatasourceExclude() {
         return datasourceExclude;
     }
@@ -104,7 +110,6 @@ public class EasyAtProperties {
     public static class Storage {
         private String type = "file";
         private String fileDir = "./data/easy-at";
-        private final Redis redis = new Redis();
 
         public String getType() {
             return type;
@@ -121,66 +126,62 @@ public class EasyAtProperties {
         public void setFileDir(String v) {
             this.fileDir = v;
         }
+    }
 
-        public Redis getRedis() {
-            return redis;
+    public static class Redis {
+        private String host = "localhost";
+        private int port = 6379;
+        private String password;
+        private int database = 0;
+        private int timeoutMillis = 2000;
+        private int maxTotal = 8;
+
+        public String getHost() {
+            return host;
         }
 
-        public static class Redis {
-            private String host = "localhost";
-            private int port = 6379;
-            private String password;
-            private int database = 0;
-            private int timeoutMillis = 2000;
-            private int maxTotal = 8;
+        public void setHost(String v) {
+            this.host = v;
+        }
 
-            public String getHost() {
-                return host;
-            }
+        public int getPort() {
+            return port;
+        }
 
-            public void setHost(String v) {
-                this.host = v;
-            }
+        public void setPort(int v) {
+            this.port = v;
+        }
 
-            public int getPort() {
-                return port;
-            }
+        public String getPassword() {
+            return password;
+        }
 
-            public void setPort(int v) {
-                this.port = v;
-            }
+        public void setPassword(String v) {
+            this.password = v;
+        }
 
-            public String getPassword() {
-                return password;
-            }
+        public int getDatabase() {
+            return database;
+        }
 
-            public void setPassword(String v) {
-                this.password = v;
-            }
+        public void setDatabase(int v) {
+            this.database = v;
+        }
 
-            public int getDatabase() {
-                return database;
-            }
+        public int getTimeoutMillis() {
+            return timeoutMillis;
+        }
 
-            public void setDatabase(int v) {
-                this.database = v;
-            }
+        public void setTimeoutMillis(int v) {
+            this.timeoutMillis = v;
+        }
 
-            public int getTimeoutMillis() {
-                return timeoutMillis;
-            }
+        public int getMaxTotal() {
+            return maxTotal;
+        }
 
-            public void setTimeoutMillis(int v) {
-                this.timeoutMillis = v;
-            }
-
-            public int getMaxTotal() {
-                return maxTotal;
-            }
-
-            public void setMaxTotal(int v) {
-                this.maxTotal = v;
-            }
+        public void setMaxTotal(int v) {
+            this.maxTotal = v;
         }
     }
 

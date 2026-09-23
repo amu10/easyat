@@ -84,9 +84,29 @@ easy-at:
     type: redis
   lock:
     type: redis
+  redis:
+    host: localhost
+    port: 6379
 ```
 
 `easy-at-storage-redis` 提供 `RedisAtRepository`/`RedisBranchRepository`/`RedisGlobalLockManager`，状态 CAS、token/租约锁、恢复队列均通过 Lua 脚本保证原子性。在 `easy-at` 配置下填入 `host`/`port`/密码/`database` 即可，Starter 自动构建 `JedisPool`。
+
+事务存储与全局锁也可以独立选择。例如，事务和 undo log 持久化到 JDBC、全局锁使用 Redis：
+
+```yaml
+easy-at:
+  storage:
+    type: jdbc
+  lock:
+    type: redis
+    wait-timeout: 1s
+    lease: 30s
+  redis:
+    host: localhost
+    port: 6379
+```
+
+`storage.type` 只决定 `AtRepository` 和 `BranchRepository`，`lock.type` 只决定 `GlobalLockManager`；任一项选择 Redis 时，Starter 都会创建并复用同一个 `JedisPool`。
 
 ## 运维：管理 API 与指标
 

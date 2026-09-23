@@ -1,17 +1,11 @@
-DROP TABLE IF EXISTS easy_at_branch;
-DROP TABLE IF EXISTS easy_at_lock;
-DROP TABLE IF EXISTS easy_at_undo_log;
-DROP TABLE IF EXISTS easy_at_global;
-DROP TABLE IF EXISTS account;
-
-CREATE TABLE account (
+CREATE TABLE IF NOT EXISTS account (
     id BIGINT PRIMARY KEY,
     balance INT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-INSERT INTO account(id,balance) VALUES (1,1000),(2,500);
+INSERT IGNORE INTO account(id,balance) VALUES (1,1000),(2,500);
 
-CREATE TABLE easy_at_global (
+CREATE TABLE IF NOT EXISTS easy_at_global (
     xid VARCHAR(128) PRIMARY KEY,
     name VARCHAR(256) NOT NULL,
     status VARCHAR(32) NOT NULL,
@@ -26,7 +20,7 @@ CREATE TABLE easy_at_global (
     INDEX idx_easy_at_global_recovery(status,next_retry_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE easy_at_undo_log (
+CREATE TABLE IF NOT EXISTS easy_at_undo_log (
     undo_id VARCHAR(128) PRIMARY KEY,
     xid VARCHAR(128) NOT NULL,
     resource_id VARCHAR(128) NOT NULL,
@@ -43,7 +37,7 @@ CREATE TABLE easy_at_undo_log (
     INDEX idx_easy_at_undo_xid(xid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE easy_at_lock (
+CREATE TABLE IF NOT EXISTS easy_at_lock (
     resource_id VARCHAR(128) NOT NULL,
     table_name VARCHAR(128) NOT NULL,
     pk_value VARCHAR(512) NOT NULL,
@@ -54,7 +48,7 @@ CREATE TABLE easy_at_lock (
     INDEX idx_easy_at_lock_xid(xid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE easy_at_branch (
+CREATE TABLE IF NOT EXISTS easy_at_branch (
     branch_id VARCHAR(128) PRIMARY KEY,
     xid VARCHAR(128) NOT NULL,
     resource_id VARCHAR(128) NOT NULL,

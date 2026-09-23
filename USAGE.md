@@ -93,11 +93,13 @@ easy-at:
   storage:
     type: file                         # 默认 file；生产用 jdbc 或 redis
     file-dir: ./data/easy-at
-    redis:                             # type=redis 时生效
-      host: localhost
-      port: 6379
-      password: ""
-      database: 0
+
+  # ---- Redis 连接：storage 或 lock 任一使用 redis 时生效 ----
+  redis:
+    host: localhost
+    port: 6379
+    password: ""
+    database: 0
 
   # ---- 全局行锁：file / jdbc / redis ----
   lock:
