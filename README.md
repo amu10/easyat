@@ -3,6 +3,7 @@
 easyAt 是一个不需要独立协调服务器、嵌入 Spring Boot 应用运行的轻量级 AT 事务框架实验项目。
 
 > 📖 想读懂源码？先看 **[CODE_GUIDE.md](./CODE_GUIDE.md)** —— 它按一次事务的生命周期，串联了各模块核心类的职责与关键方法。
+> 🚀 想直接上手？看 **[USAGE.md](./USAGE.md)** —— 依赖、配置、单服务/跨服务完整示例、管理运维与排查。
 
 ## 当前状态
 
@@ -119,6 +120,8 @@ public void createOrder() {
     accountMapper.decrease(...);
 }
 ```
+
+可运行的 Spring Boot 3 示例位于 [`easy-at-example-boot3`](./easy-at-example-boot3)，包含 H2 建表、成功转账和异常回滚接口。
 
 ## 模块
 

@@ -1,1 +1,3 @@
 io.github.easyat.boot3.EasyAtAutoConfiguration
+io.github.easyat.boot3.EasyAtRedisAutoConfiguration
+io.github.easyat.boot3.EasyAtFeignAutoConfiguration

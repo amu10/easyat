@@ -1,1 +1,1 @@
-org.springframework.boot.autoconfigure.EnableAutoConfiguration=io.github.easyat.boot2.EasyAtAutoConfiguration
+org.springframework.boot.autoconfigure.EnableAutoConfiguration=io.github.easyat.boot2.EasyAtAutoConfiguration,io.github.easyat.boot2.EasyAtRedisAutoConfiguration,io.github.easyat.boot2.EasyAtFeignAutoConfiguration

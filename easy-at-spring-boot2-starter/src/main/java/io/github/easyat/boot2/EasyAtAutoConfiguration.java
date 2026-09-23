@@ -4,7 +4,6 @@ import io.github.easyat.core.*;
 import io.github.easyat.jdbc.*;
 import io.github.easyat.spring.*;
 import io.github.easyat.storage.file.*;
-import io.github.easyat.storage.redis.*;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.*;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -15,8 +14,6 @@ import org.springframework.beans.factory.ObjectProvider;
 import io.micrometer.core.instrument.MeterRegistry;
 import javax.servlet.Filter;
 import javax.sql.DataSource;
-import redis.clients.jedis.JedisPool;
-import redis.clients.jedis.JedisPoolConfig;
 import java.nio.file.Paths;
 import java.util.Map;
 
@@ -47,15 +44,11 @@ public class EasyAtAutoConfiguration {
     AtRepository jdbcAtRepository(DataSource dataSource,UndoDataCodec codec){return new JdbcAtRepository(dataSource,codec);}
     @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.storage",name="type",havingValue="file",matchIfMissing=true)
     AtRepository fileAtRepository(){return new FileAtRepository(Paths.get(props.getStorage().getFileDir()));}
-    @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.storage",name="type",havingValue="redis")
-    AtRepository redisAtRepository(JedisPool pool,UndoDataCodec codec){return new RedisAtRepository(pool,codec,"easy-at");}
 
     @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.lock",name="type",havingValue="jdbc")
     GlobalLockManager jdbcAtLockManager(DataSource dataSource){return new JdbcGlobalLockManager(dataSource,props.getLock().getLease().toMillis(),props.getLock().getWaitTimeout().toMillis());}
     @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.lock",name="type",havingValue="file",matchIfMissing=true)
     GlobalLockManager fileAtLockManager(){return new FileGlobalLockManager(Paths.get(props.getStorage().getFileDir()+"-locks"),props.getLock().getWaitTimeout().toMillis());}
-    @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.lock",name="type",havingValue="redis")
-    GlobalLockManager redisAtLockManager(JedisPool pool){return new RedisGlobalLockManager(pool,props.getLock().getLease().toMillis(),props.getLock().getWaitTimeout().toMillis());}
 
     @Bean @ConditionalOnMissingBean UndoExecutor easyAtUndoExecutor(Map<String,DataSource> sources){return new JdbcUndoExecutor(sources);}
     @Bean @ConditionalOnMissingBean AtTransactionManager easyAtManager(AtRepository r,UndoExecutor u,GlobalLockManager l){return new AtTransactionManager(r,u,l,props.getRecovery().getMaxRetries());}
@@ -64,8 +57,6 @@ public class EasyAtAutoConfiguration {
     BranchRepository jdbcBranchRepository(DataSource dataSource){return new JdbcBranchRepository(dataSource);}
     @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.storage",name="type",havingValue="file",matchIfMissing=true)
     BranchRepository fileBranchRepository(){return new FileBranchRepository(Paths.get(props.getStorage().getFileDir()+"-branches"));}
-    @Bean @ConditionalOnMissingBean @ConditionalOnProperty(prefix="easy-at.storage",name="type",havingValue="redis")
-    BranchRepository redisBranchRepository(JedisPool pool){return new RedisBranchRepository(pool);}
 
     @Bean @ConditionalOnMissingBean BranchCoordinator branchCoordinator(BranchRepository branches,AtTransactionManager manager,HmacSigner signer,EasyAtMetrics metrics){
         return new BranchCoordinator(branches,manager,signer,props.getApplicationName(),metrics);
@@ -106,15 +97,7 @@ public class EasyAtAutoConfiguration {
     @Bean @ConditionalOnClass(name="org.springframework.web.client.RestTemplate") RestTemplateCustomizer easyAtRestTemplateCustomizer(HmacSigner signer){
         return new EasyAtRestTemplateCustomizer(new AtRestTemplateInterceptor(signer,props.getApplicationName()));
     }
-    @Bean @ConditionalOnClass(name="feign.RequestInterceptor") EasyAtFeignInterceptor easyAtFeignInterceptor(HmacSigner signer){return new EasyAtFeignInterceptor(signer,props.getApplicationName());}
     @Bean @ConditionalOnClass(name="org.springframework.web.reactive.function.client.WebClient")
     Object easyAtWebClientCustomizer(HmacSigner signer){return WebClientPropagator.createCustomizer(signer,props.getApplicationName());}
 
-    @Bean @ConditionalOnProperty(prefix="easy-at.storage",name="type",havingValue="redis")
-    JedisPool easyAtJedisPool(){
-        EasyAtProperties.Storage.Redis r=props.getStorage().getRedis();
-        redis.clients.jedis.JedisPoolConfig cfg=new redis.clients.jedis.JedisPoolConfig();
-        cfg.setMaxTotal(r.getMaxTotal());
-        return new redis.clients.jedis.JedisPool(cfg,r.getHost(),r.getPort(),r.getTimeoutMillis(),r.getPassword(),r.getDatabase());
-    }
 }

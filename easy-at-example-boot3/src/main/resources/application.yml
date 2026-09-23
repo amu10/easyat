@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: easy-at-example
+  datasource:
+    url: jdbc:h2:mem:easyat_example;MODE=MySQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  sql:
+    init:
+      mode: always
+
+easy-at:
+  application-name: easy-at-example
+  production: false
+  storage:
+    type: file
+    file-dir: ./data/easy-at-example
+  lock:
+    type: file
+    wait-timeout: 1s
+    lease: 30s
+  recovery:
+    enabled: true
+    interval: 5s
+    batch-size: 20
+    max-retries: 3
