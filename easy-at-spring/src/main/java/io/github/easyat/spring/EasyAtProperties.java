@@ -21,6 +21,7 @@ public class EasyAtProperties {
     private final Lock lock = new Lock();
     private final Sql sql = new Sql();
     private final Recovery recovery = new Recovery();
+    private final Cleanup cleanup = new Cleanup();
     private final Transport transport = new Transport();
     private final Management management = new Management();
 
@@ -89,6 +90,10 @@ public class EasyAtProperties {
 
     public Recovery getRecovery() {
         return recovery;
+    }
+
+    public Cleanup getCleanup() {
+        return cleanup;
     }
 
     public Transport getTransport() {
@@ -281,6 +286,63 @@ public class EasyAtProperties {
 
         public void setMaxRetries(int v) {
             this.maxRetries = v;
+        }
+    }
+
+    public static class Cleanup {
+        private boolean enabled = false;
+        private Duration interval = Duration.ofMinutes(1);
+        private int batchSize = 500;
+        private Duration committedRetention = Duration.ofDays(7);
+        private Duration rolledBackRetention = Duration.ofDays(30);
+        private Duration expiredLockRetention = Duration.ofMinutes(10);
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public Duration getInterval() {
+            return interval;
+        }
+
+        public void setInterval(Duration interval) {
+            this.interval = interval;
+        }
+
+        public int getBatchSize() {
+            return batchSize;
+        }
+
+        public void setBatchSize(int batchSize) {
+            this.batchSize = batchSize;
+        }
+
+        public Duration getCommittedRetention() {
+            return committedRetention;
+        }
+
+        public void setCommittedRetention(Duration committedRetention) {
+            this.committedRetention = committedRetention;
+        }
+
+        public Duration getRolledBackRetention() {
+            return rolledBackRetention;
+        }
+
+        public void setRolledBackRetention(Duration rolledBackRetention) {
+            this.rolledBackRetention = rolledBackRetention;
+        }
+
+        public Duration getExpiredLockRetention() {
+            return expiredLockRetention;
+        }
+
+        public void setExpiredLockRetention(Duration expiredLockRetention) {
+            this.expiredLockRetention = expiredLockRetention;
         }
     }
 

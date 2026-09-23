@@ -74,6 +74,32 @@ MySQL 脚本位于 `easy-at-jdbc/src/main/resources/db/mysql/easy-at.sql`，Post
 
 JDBC Repository 已启用 connection-bound undo writer：经 `AtDataSource` 执行的 DML 在关闭自动提交或由 Spring `@Transactional` 管理时，会在**同一条 JDBC Connection**中写入 before/after image，因此本地事务回滚会同时撤销业务 DML 与 undo log。自动提交模式仍无法提供“DML 与 undo log 同时提交”的崩溃原子性，生产业务应使用 Spring `@Transactional`。
 
+### JDBC 历史清理
+
+历史清理默认关闭。确认保留策略后可启用渐进式清理：
+
+```yaml
+easy-at:
+  cleanup:
+    enabled: true
+    interval: 1m
+    batch-size: 500
+    committed-retention: 7d
+    rolled-back-retention: 30d
+    expired-lock-retention: 10m
+```
+
+每轮最多分别清理 `batch-size` 条 `COMMITTED` 和 `ROLLED_BACK` 事务，并按 `easy_at_undo_log` → `easy_at_branch` → `easy_at_global` 的顺序在短事务内删除。`ACTIVE`、`COMMITTING`、`ROLLING_BACK`、`ROLLBACK_FAILED`、`DIRTY_WRITE` 和 `MANUAL_INTERVENTION` 不会自动清理。过期锁会在租约到期并超过 `expired-lock-retention` 后分批删除。
+
+已有 MySQL 数据库建议补充清理索引（新建库使用最新建表脚本时已包含）：
+
+```sql
+CREATE INDEX idx_easy_at_global_cleanup
+  ON easy_at_global(status, updated_at, xid);
+CREATE INDEX idx_easy_at_lock_expired
+  ON easy_at_lock(lease_until);
+```
+
 ## Redis 存储
 
 共享 Redis 时启用：

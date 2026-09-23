@@ -120,6 +120,31 @@ public class EasyAtAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "easy-at.storage", name = "type", havingValue = "jdbc")
+    JdbcAtCleaner jdbcAtCleaner(DataSource dataSource) {
+        return new JdbcAtCleaner(dataSource);
+    }
+
+    @Bean(destroyMethod = "close")
+    @ConditionalOnMissingBean
+    @ConditionalOnBean(JdbcAtCleaner.class)
+    @ConditionalOnProperty(prefix = "easy-at.cleanup", name = "enabled", havingValue = "true")
+    AtCleanupScheduler easyAtCleanupScheduler(JdbcAtCleaner cleaner) {
+        EasyAtProperties.Cleanup cleanup = props.getCleanup();
+        AtCleanupScheduler scheduler =
+                new AtCleanupScheduler(
+                        cleaner,
+                        cleanup.getInterval().toMillis(),
+                        cleanup.getCommittedRetention().toMillis(),
+                        cleanup.getRolledBackRetention().toMillis(),
+                        cleanup.getExpiredLockRetention().toMillis(),
+                        cleanup.getBatchSize());
+        scheduler.start();
+        return scheduler;
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     @ConditionalOnProperty(
             prefix = "easy-at.storage",
             name = "type",

@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS easy_at_global (
   lease_until DATETIME(3) NULL DEFAULT NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
-  INDEX idx_easy_at_global_recovery (status, next_retry_at)
+  INDEX idx_easy_at_global_recovery (status, next_retry_at),
+  INDEX idx_easy_at_global_cleanup (status, updated_at, xid)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS easy_at_undo_log (
@@ -38,7 +39,8 @@ CREATE TABLE IF NOT EXISTS easy_at_lock (
   lease_until DATETIME(3) NOT NULL,
   created_at DATETIME(3) NOT NULL,
   PRIMARY KEY(resource_id, table_name, pk_value),
-  INDEX idx_easy_at_lock_xid (xid)
+  INDEX idx_easy_at_lock_xid (xid),
+  INDEX idx_easy_at_lock_expired (lease_until)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS easy_at_branch (

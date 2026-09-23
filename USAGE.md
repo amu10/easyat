@@ -124,6 +124,15 @@ easy-at:
     lease: 30s
     max-retries: 20
 
+  # ---- JDBC 历史渐进清理（默认关闭） ----
+  cleanup:
+    enabled: false
+    interval: 1m
+    batch-size: 500
+    committed-retention: 7d
+    rolled-back-retention: 30d
+    expired-lock-retention: 10m
+
   # ---- 管理 API ----
   management:
     enabled: false                     # 开启后暴露 /_easy-at/v1/** 管理端点

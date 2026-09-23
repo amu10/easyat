@@ -28,3 +28,11 @@ easy-at:
     interval: 5s
     batch-size: 20
     max-retries: 3
+  cleanup:
+    # 示例默认不删除历史，便于通过 /demo/transactions 和 /demo/undo-logs 观察。
+    enabled: false
+    interval: 1m
+    batch-size: 100
+    committed-retention: 7d
+    rolled-back-retention: 30d
+    expired-lock-retention: 10m
