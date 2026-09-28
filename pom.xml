@@ -36,8 +36,6 @@
     <module>easy-at-spring</module>
     <module>easy-at-spring-boot2-starter</module>
     <module>easy-at-spring-boot3-starter</module>
-    <module>easy-at-example-boot3</module>
-
   </modules>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -159,6 +157,7 @@
               <publishingServerId>central</publishingServerId>
               <autoPublish>false</autoPublish>
               <deploymentName>io.github.amu10:easyAt:0.1.0</deploymentName>
+              <skipPublishing>${maven.deploy.skip}</skipPublishing>
             </configuration>
           </plugin>
         </plugins>
