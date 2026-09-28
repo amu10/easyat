@@ -6,6 +6,29 @@
     <artifactId>easy-at-parent</artifactId>
     <version>0.1.0</version>
   </parent>
+  <name>easy-at-spring</name>
+  <description>Spring integration for easy-at: AOP aspect, management endpoints and context propagation.</description>
+  <url>https://github.com/amu10/easyat</url>
+  <licenses>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+  <scm>
+    <connection>scm:git:https://github.com/amu10/easyat.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/amu10/easyat.git</developerConnection>
+    <url>https://github.com/amu10/easyat</url>
+    <tag>v0.1.0</tag>
+  </scm>
+  <developers>
+    <developer>
+      <id>amu10</id>
+      <name>amu10</name>
+      <url>https://github.com/amu10</url>
+    </developer>
+  </developers>
   <artifactId>easy-at-spring</artifactId>
   <properties>
     <spring.version>5.3.39</spring.version>
