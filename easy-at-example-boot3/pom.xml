@@ -7,42 +7,56 @@
     <version>0.1.0</version>
   </parent>
   <artifactId>easy-at-example-boot3</artifactId>
+  <packaging>pom</packaging>
+  <name>easyAt Examples (Spring Boot 3)</name>
+  <description>Aggregator for easyAt Spring Boot 3 example modules</description>
+
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <spring-boot.version>3.3.3</spring-boot.version>
+    <spring-cloud.version>2023.0.3</spring-cloud.version>
+    <spring-cloud-alibaba.version>2023.0.3.2</spring-cloud-alibaba.version>
+    <jackson.version>2.17.2</jackson.version>
     <maven.deploy.skip>true</maven.deploy.skip>
   </properties>
-  <dependencies>
-    <dependency>
-    <groupId>io.github.amu10</groupId>
-      <artifactId>easy-at-spring-boot3-starter</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-web</artifactId>
-      <version>${spring-boot.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>com.mysql</groupId>
-      <artifactId>mysql-connector-j</artifactId>
-      <version>8.4.0</version>
-      <scope>runtime</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-test</artifactId>
-      <version>${spring-boot.version}</version>
-      <scope>test</scope>
-    </dependency>
-  </dependencies>
-  <build>
-    <plugins>
-      <plugin>
+
+  <!--
+    Spring Cloud / Alibaba BOM 集中在此统一管理，远程示例(caller/callee)与本地示例(local)都继承。
+    关键点：必须同时导入 spring-boot-dependencies，把 jackson 锁到 2.17.2(>=2.15)，
+    否则 nacos-client 2.4.x 在初始化 JacksonUtils 时会因缺少
+    com.fasterxml.jackson.core.exc.StreamConstraintsException 而抛 NoClassDefFoundError。
+  -->
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-dependencies</artifactId>
+        <version>${spring-cloud.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.alibaba.cloud</groupId>
+        <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+        <version>${spring-cloud-alibaba.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- spring-boot-dependencies 放在最后，确保 jackson 等版本由 Boot 3.3.3 统一接管 -->
+      <dependency>
         <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-maven-plugin</artifactId>
+        <artifactId>spring-boot-dependencies</artifactId>
         <version>${spring-boot.version}</version>
-      </plugin>
-    </plugins>
-  </build>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <modules>
+    <module>easy-at-example-local</module>
+    <module>easy-at-example-remote-caller</module>
+    <module>easy-at-example-remote-callee</module>
+  </modules>
 </project>

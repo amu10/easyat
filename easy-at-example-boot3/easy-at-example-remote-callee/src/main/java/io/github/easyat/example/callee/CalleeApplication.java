@@ -1,11 +1,11 @@
-package io.github.easyat.example;
+package io.github.easyat.example.callee;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class EasyAtExampleApplication {
+public class CalleeApplication {
     public static void main(String[] args) {
-        SpringApplication.run(EasyAtExampleApplication.class, args);
+        SpringApplication.run(CalleeApplication.class, args);
     }
 }

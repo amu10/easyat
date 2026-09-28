@@ -1,6 +1,6 @@
 spring:
   application:
-    name: easy-at-example
+    name: easy-at-example-local
   datasource:
     url: jdbc:mysql://localhost:3306/easyat01?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -15,7 +15,7 @@ server:
   port: 18080
 
 easy-at:
-  application-name: easy-at-example
+  application-name: easy-at-example-local
   production: false
   storage:
     type: jdbc
@@ -36,3 +36,7 @@ easy-at:
     committed-retention: 7d
     rolled-back-retention: 30d
     expired-lock-retention: 10m
+
+logging:
+  level:
+    io.github.easyat: INFO

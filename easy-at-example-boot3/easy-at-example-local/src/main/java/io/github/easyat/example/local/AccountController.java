@@ -1,4 +1,4 @@
-package io.github.easyat.example;
+package io.github.easyat.example.local;
 
 import java.util.List;
 import java.util.Map;

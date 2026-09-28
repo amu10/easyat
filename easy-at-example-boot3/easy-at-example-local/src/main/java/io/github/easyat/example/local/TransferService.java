@@ -1,4 +1,4 @@
-package io.github.easyat.example;
+package io.github.easyat.example.local;
 
 import io.github.easyat.annotation.EasyAtTransactional;
 import org.springframework.jdbc.core.JdbcTemplate;

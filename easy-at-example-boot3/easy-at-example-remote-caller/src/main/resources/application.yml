@@ -1,0 +1,64 @@
+spring:
+  application:
+    name: order-service
+  datasource:
+    url: jdbc:mysql://localhost:3306/easyat01?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: root
+    password: root
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            # FULL：打印 Feign 请求/响应头，可直接看到发出的 X-EasyAt-Xid / Deadline / Source
+            # 调试完想降噪就改成 BASIC 或 NONE
+            loggerLevel: FULL
+    nacos:
+      # 顶层 server-addr/username/password 供 Nacos 公共上下文使用
+      server-addr: 192.168.110.237:8848
+      username: nacos
+      password: gg123456
+      discovery:
+        # 关键：NacosDiscoveryProperties 只认 spring.cloud.nacos.discovery.server-addr
+        # 若注册时报 Client not connected / STARTING，把下面三行注释放开
+#        server-addr: 192.168.110.237:8848
+#        username: nacos
+#        password: gg123456
+        enabled: true
+        ip: 127.0.0.1
+
+server:
+  port: 18181
+
+easy-at:
+  application-name: order-service
+  production: false
+  storage:
+    type: jdbc
+  lock:
+    type: jdbc
+    wait-timeout: 1s
+    lease: 30s
+  recovery:
+    enabled: true
+    interval: 5s
+    batch-size: 20
+    max-retries: 3
+  cleanup:
+    enabled: false
+    interval: 1m
+    batch-size: 100
+    committed-retention: 7d
+    rolled-back-retention: 30d
+    expired-lock-retention: 10m
+
+logging:
+  level:
+    io.github.easyat: INFO
+    # Feign 客户端接口，配合上面的 loggerLevel=FULL 才会打印实际发出的请求头
+    io.github.easyat.example.caller.InventoryFeignClient: DEBUG

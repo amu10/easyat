@@ -36,6 +36,7 @@
     <module>easy-at-spring</module>
     <module>easy-at-spring-boot2-starter</module>
     <module>easy-at-spring-boot3-starter</module>
+    <module>easy-at-example-boot3</module>
   </modules>
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

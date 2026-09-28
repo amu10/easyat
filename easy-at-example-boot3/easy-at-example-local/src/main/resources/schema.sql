@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS account (
 
 INSERT IGNORE INTO account(id,balance) VALUES (1,1000),(2,500);
 
+-- easyAt 协调表（与 caller/callee 示例共享同一个 easyat01 库时，重复建表幂等，互不冲突）
 CREATE TABLE IF NOT EXISTS easy_at_global (
     xid VARCHAR(128) PRIMARY KEY,
     name VARCHAR(256) NOT NULL,
