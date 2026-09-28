@@ -40,6 +40,12 @@ final class SqlUndoLogGenerator {
     private final LocalTransactionBridge bridge;
     private final AtSqlDialect dialect;
     private final BranchRegistrar registrar;
+    private final UpdateRecognizer updateRecognizer = new UpdateRecognizer();
+    private final DeleteRecognizer deleteRecognizer = new DeleteRecognizer();
+    private final InsertRecognizer insertRecognizer = new InsertRecognizer();
+    private final UpdateAtExecutor updateExecutor = new UpdateAtExecutor();
+    private final DeleteAtExecutor deleteExecutor = new DeleteAtExecutor();
+    private final InsertAtExecutor insertExecutor = new InsertAtExecutor();
     private Runnable afterCommitHook;
 
     SqlUndoLogGenerator(
@@ -106,9 +112,27 @@ final class SqlUndoLogGenerator {
         // attempts to register another branch until the connection pool is exhausted.
         if (internalStatement(statement)) return null;
         registrar.register(xid, resourceId);
-        if (statement instanceof Update) return update(c, xid, (Update) statement, parameters);
-        if (statement instanceof Delete) return delete(c, xid, (Delete) statement, parameters);
-        if (statement instanceof Insert) return insert(c, xid, (Insert) statement, parameters);
+        if (statement instanceof Update)
+            return updateExecutor.execute(
+                    this,
+                    c,
+                    xid,
+                    updateRecognizer.recognize((Update) statement, dialect),
+                    parameters);
+        if (statement instanceof Delete)
+            return deleteExecutor.execute(
+                    this,
+                    c,
+                    xid,
+                    deleteRecognizer.recognize((Delete) statement, dialect),
+                    parameters);
+        if (statement instanceof Insert)
+            return insertExecutor.execute(
+                    this,
+                    c,
+                    xid,
+                    insertRecognizer.recognize((Insert) statement, dialect),
+                    parameters);
         throw unsupported(sql);
     }
 
@@ -132,7 +156,7 @@ final class SqlUndoLogGenerator {
             int parameterCount =
                     set.getColumns().size() == 1 && set.getValues().size() == 1
                             ? UpdateExpressionAnalyzer.parameterCount(
-                                    set.getColumn(0), set.getValue(0))
+                                    set.getColumn(0), set.getValue(0), dialect)
                             : -1;
             reject(
                     set.getColumns().size() != 1
@@ -269,7 +293,7 @@ final class SqlUndoLogGenerator {
             manager.get().discardUndo(c, capture.record.getXid(), capture.record.getId());
     }
 
-    private UndoRecord record(
+    UndoRecord record(
             String xid,
             String table,
             String pk,
@@ -291,9 +315,17 @@ final class SqlUndoLogGenerator {
         return r;
     }
 
-    private void lock(String table, Object key, String xid) {
+    void lock(String table, Object key, String xid) {
         GlobalLockManager lockManager = locks == null ? null : locks.get();
         if (lockManager != null) lockManager.acquire(resourceId, table, String.valueOf(key), xid);
+    }
+
+    AtSqlDialect dialect() {
+        return dialect;
+    }
+
+    void append(Connection connection, UndoRecord record) {
+        manager.get().append(connection, record);
     }
 
     private static Statement parse(String sql) {
@@ -312,7 +344,7 @@ final class SqlUndoLogGenerator {
         return new Where(((Column) equal.getLeftExpression()).getColumnName());
     }
 
-    private static String findPrimaryKey(Connection c, Table table) throws SQLException {
+    static String findPrimaryKey(Connection c, Table table) throws SQLException {
         DatabaseMetaData metadata = c.getMetaData();
         String tableSchema = identifier(table.getSchemaName());
         String tableName = identifier(table.getName());
@@ -366,8 +398,7 @@ final class SqlUndoLogGenerator {
         return new ArrayList<String>(candidates);
     }
 
-    private static void assertPrimaryKey(Connection c, Table table, String column)
-            throws SQLException {
+    static void assertPrimaryKey(Connection c, Table table, String column) throws SQLException {
         String actual = findPrimaryKey(c, table);
         if (!unquote(column).equalsIgnoreCase(actual))
             throw new AtException("WHERE column must be the primary key: " + table + "." + column);
@@ -394,7 +425,7 @@ final class SqlUndoLogGenerator {
         return false;
     }
 
-    private static int indexOf(List<String> columns, String name) {
+    static int indexOf(List<String> columns, String name) {
         for (int i = 0; i < columns.size(); i++)
             if (unquote(columns.get(i)).equalsIgnoreCase(name)) return i;
         return -1;
@@ -418,18 +449,18 @@ final class SqlUndoLogGenerator {
         return unquote(value);
     }
 
-    private static Object require(Map<Integer, Object> p, int i) {
+    static Object require(Map<Integer, Object> p, int i) {
         if (!p.containsKey(i)) throw new AtException("Missing JDBC parameter " + i);
         return p.get(i);
     }
 
-    private static Object column(RowImage image, String name) {
+    static Object column(RowImage image, String name) {
         for (Map.Entry<String, Object> entry : image.getColumns().entrySet())
             if (entry.getKey().equalsIgnoreCase(name)) return entry.getValue();
         throw new AtException("Before image does not contain column: " + name);
     }
 
-    private RowImage select(Connection c, String rawTable, List<String> cols, String pk, Object key)
+    RowImage select(Connection c, String rawTable, List<String> cols, String pk, Object key)
             throws SQLException {
         StringBuilder b = new StringBuilder("SELECT ");
         for (int i = 0; i < cols.size(); i++) {
@@ -444,8 +475,7 @@ final class SqlUndoLogGenerator {
         return query(c, b.toString(), key);
     }
 
-    private RowImage selectAll(Connection c, String rawTable, String pk, Object key)
-            throws SQLException {
+    RowImage selectAll(Connection c, String rawTable, String pk, Object key) throws SQLException {
         return query(
                 c,
                 "SELECT * FROM "

@@ -68,4 +68,11 @@ public final class PostgresAtSqlDialect implements AtSqlDialect {
     public boolean isReservedWord(String id) {
         return id != null && RESERVED.contains(id.toUpperCase(Locale.ROOT));
     }
+
+    @Override
+    public boolean supportsUpdateFunction(String functionName) {
+        return AtSqlDialect.super.supportsUpdateFunction(functionName)
+                || "NOW".equalsIgnoreCase(functionName)
+                || "CURRENT_TIMESTAMP".equalsIgnoreCase(functionName);
+    }
 }

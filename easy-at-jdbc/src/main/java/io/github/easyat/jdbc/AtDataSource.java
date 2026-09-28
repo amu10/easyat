@@ -75,7 +75,14 @@ public final class AtDataSource implements DataSource {
         this.delegate = delegate;
         this.bridge = bridge;
         this.requireLocalTransaction = requireLocalTransaction;
-        this.generator = new SqlUndoLogGenerator(resourceId, manager, locks, bridge, registrar);
+        this.generator =
+                new SqlUndoLogGenerator(
+                        resourceId,
+                        manager,
+                        locks,
+                        bridge,
+                        AtSqlDialects.detect(delegate),
+                        registrar);
     }
 
     public AtDataSource(
@@ -92,7 +99,12 @@ public final class AtDataSource implements DataSource {
         this.requireLocalTransaction = requireLocalTransaction;
         this.generator =
                 new SqlUndoLogGenerator(
-                        resourceId, manager, locks, bridge, new GenericAtSqlDialect(), registrar);
+                        resourceId,
+                        manager,
+                        locks,
+                        bridge,
+                        AtSqlDialects.detect(delegate),
+                        registrar);
     }
 
     public DataSource getDelegate() {

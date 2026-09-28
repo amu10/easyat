@@ -15,6 +15,13 @@ public interface AtSqlDialect {
 
     boolean isReservedWord(String identifier);
 
+    /** Whether a scalar function is safe inside an AT UPDATE assignment. */
+    default boolean supportsUpdateFunction(String functionName) {
+        if (functionName == null) return false;
+        String name = functionName.toUpperCase(java.util.Locale.ROOT);
+        return "COALESCE".equals(name) || "ABS".equals(name);
+    }
+
     /** Quote a possibly schema-qualified table reference. */
     default String quoteTable(String schema, String table) {
         String t = quoteIdentifier(table);
