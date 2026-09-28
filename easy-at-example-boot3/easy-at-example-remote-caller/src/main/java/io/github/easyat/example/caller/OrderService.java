@@ -12,13 +12,11 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 下单服务（全局事务发起方）。
  *
- * <p>{@code @EasyAtTransactional} 会开启一笔全局事务并把 XID 绑定到当前线程；随后的本地 DML
- * （扣账户、写订单）与 undo 日志都在同一个本地事务里。对库存服务的 Feign 调用发生在事务开启之后，
- * 所以 XID 会随请求头传播过去；库存服务加入同一笔事务后，它的库存扣减也挂在这个 XID 下。
+ * <p>{@code @EasyAtTransactional} 会开启一笔全局事务并把 XID 绑定到当前线程；随后的本地 DML （扣账户、写订单）与 undo
+ * 日志都在同一个本地事务里。对库存服务的 Feign 调用发生在事务开启之后， 所以 XID 会随请求头传播过去；库存服务加入同一笔事务后，它的库存扣减也挂在这个 XID 下。
  *
- * <p>任意一个分支抛异常（这里是库存服务抛错被 Feign 转成 FeignException 抛上来），
- * {@code @EasyAtTransactional} 的切面都会回滚：本地 undo + 同一 XID 下所有 undo（含库存服务产生的）
- * 一起被补偿，账户余额和库存都回到事务开始前。
+ * <p>任意一个分支抛异常（这里是库存服务抛错被 Feign 转成 FeignException 抛上来）， {@code @EasyAtTransactional} 的切面都会回滚：本地
+ * undo + 同一 XID 下所有 undo（含库存服务产生的） 一起被补偿，账户余额和库存都回到事务开始前。
  */
 @Service
 public class OrderService {
@@ -39,8 +37,9 @@ public class OrderService {
         // XID 传播观测点 ①：切面刚开启全局事务，XID 已绑定到当前线程
         log.info("[AT-caller] 全局事务已开启，xid={}", AtContext.xid());
 
-        Integer balance = jdbc.queryForObject(
-                "SELECT balance FROM account WHERE id=?", Integer.class, userId);
+        Integer balance =
+                jdbc.queryForObject(
+                        "SELECT balance FROM account WHERE id=?", Integer.class, userId);
         if (balance == null) throw new IllegalArgumentException("account not found: " + userId);
         int amount = qty * unitPrice;
         if (balance < amount) throw new IllegalStateException("insufficient balance: " + balance);
@@ -54,7 +53,12 @@ public class OrderService {
         long orderId = System.currentTimeMillis();
         jdbc.update(
                 "INSERT INTO orders(id,user_id,item_id,qty,amount,status) VALUES(?,?,?,?,?,?)",
-                orderId, userId, itemId, qty, amount, "CREATED");
+                orderId,
+                userId,
+                itemId,
+                qty,
+                amount,
+                "CREATED");
 
         // 3) 远程调用库存服务（XID 随 Feign 请求头自动传播）
         //    观测点 ②：这里的 xid 会被 EasyAtFeignInterceptor 写成 X-EasyAt-Xid 请求头；

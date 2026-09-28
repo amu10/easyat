@@ -18,13 +18,13 @@ public class TransferService {
     public void transfer(long fromId, long toId, int amount, boolean failAfterDebit) {
         if (amount <= 0) throw new IllegalArgumentException("amount must be positive");
         int fromBalance = balance(fromId);
-        int toBalance = balance(toId);
+        balance(toId); // validate target account exists
         if (fromBalance < amount) throw new IllegalArgumentException("insufficient balance");
 
-        // easyAt 当前只接受 SET column=?、WHERE primary_key=? 的安全单行形式。
-        jdbc.update("UPDATE account SET balance=? WHERE id=?", fromBalance - amount, fromId);
+        // 同列加减会保存 before image，undo 时直接写回旧值。
+        jdbc.update("UPDATE account SET balance=balance-? WHERE id=?", amount, fromId);
         if (failAfterDebit) throw new IllegalStateException("simulated failure after debit");
-        jdbc.update("UPDATE account SET balance=? WHERE id=?", toBalance + amount, toId);
+        jdbc.update("UPDATE account SET balance=balance+? WHERE id=?", amount, toId);
     }
 
     public int balance(long id) {

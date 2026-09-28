@@ -35,7 +35,9 @@ public class OrderController {
     public Map<String, Object> state() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("accounts", jdbc.queryForList("SELECT id,balance FROM account ORDER BY id"));
-        m.put("inventory", jdbc.queryForList("SELECT item_id,stock FROM inventory ORDER BY item_id"));
+        m.put(
+                "inventory",
+                jdbc.queryForList("SELECT item_id,stock FROM inventory ORDER BY item_id"));
         m.put(
                 "transactions",
                 jdbc.queryForList(

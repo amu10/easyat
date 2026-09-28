@@ -19,9 +19,9 @@ import net.sf.jsqlparser.statement.update.UpdateSet;
 /**
  * 用 JSqlParser 解析受限的单行 DML，并生成对应的 before/after image 与 undo SQL。
  *
- * <p>这是 AT 模式「正确性」的核心。它刻意采用<b>保守策略</b>：只接受带主键精确条件的 单行 INSERT/UPDATE/DELETE，且值必须是 {@code ?}
- * 占位符；任何多表、批量、子查询、 函数表达式、别名表、无主键表都直接抛 {@link UnsupportedAtSqlException}， 绝不允许生成「猜测性」的 undo
- * log（DESIGN.md §7.5）。
+ * <p>这是 AT 模式「正确性」的核心。它刻意采用<b>保守策略</b>：只接受带主键精确条件的 单行 INSERT/UPDATE/DELETE。UPDATE
+ * 支持直接赋值以及同列的加减运算；任何多表、批量、子查询、 函数表达式、别名表、无主键表都直接抛 {@link UnsupportedAtSqlException}，绝不允许生成「猜测性」的
+ * undo log（DESIGN.md §7.5）。
  *
  * <p>三种 DML 的 undo 逻辑（对应 DESIGN.md §7）：
  *
@@ -127,16 +127,23 @@ final class SqlUndoLogGenerator {
         if (internal(rawTable)) return null;
         String tableRef = dialect.quoteTable(identifier(parsed.getSchemaName()), parsed.getName());
         List<String> columns = new ArrayList<String>();
+        int updateParameterCount = 0;
         for (UpdateSet set : u.getUpdateSets()) {
+            int parameterCount =
+                    set.getColumns().size() == 1 && set.getValues().size() == 1
+                            ? UpdateExpressionAnalyzer.parameterCount(
+                                    set.getColumn(0), set.getValue(0))
+                            : -1;
             reject(
                     set.getColumns().size() != 1
                             || set.getValues().size() != 1
-                            || !(set.getValue(0) instanceof JdbcParameter),
+                            || parameterCount < 0,
                     u.toString());
             columns.add(set.getColumn(0).getColumnName());
+            updateParameterCount += parameterCount;
         }
         Where where = where(u.getWhere(), u.toString());
-        Object key = require(p, columns.size() + 1);
+        Object key = require(p, updateParameterCount + 1);
         assertPrimaryKey(c, parsed, where.column);
         lock(rawTable, key, xid);
         // 查 before image（被更新列的旧值）
@@ -476,7 +483,7 @@ final class SqlUndoLogGenerator {
 
     private static UnsupportedAtSqlException unsupported(String sql) {
         return new UnsupportedAtSqlException(
-                "Unsupported AT SQL; only single-row INSERT/UPDATE/DELETE by primary key with '?' values are allowed: "
+                "Unsupported AT SQL; only single-row INSERT/UPDATE/DELETE by primary key are allowed; UPDATE values may use parameters, scalar literals, or same-column arithmetic (+, -, *, /, %): "
                         + sql);
     }
 

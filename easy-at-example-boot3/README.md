@@ -13,31 +13,30 @@
 
 ## AT 模式受限 SQL（重要，写业务代码前先读）
 
-undo 日志生成器（`SqlUndoLogGenerator`）采用**保守策略**：只接受「按主键、单行的 INSERT/UPDATE/DELETE，
-且值必须是 `?` 占位符」。不符合的语句会在执行时抛 `UnsupportedAtSqlException`——这是刻意的设计
+undo 日志生成器（`SqlUndoLogGenerator`）采用**保守策略**：只接受「按主键、单行的 INSERT/UPDATE/DELETE」。
+UPDATE 支持直接参数赋值和同列加减。不符合的语句会在执行时抛 `UnsupportedAtSqlException`——这是刻意的设计
 （不为无法确定的 SQL 生成「猜测性」undo），不是 bug。
 
 | 语句 | 要求 |
 | --- | --- |
-| UPDATE | `SET 列 = ?`（值只能是 `?`）；`WHERE 主键 = ?`；WHERE 的 `?` 必须是**最后一个**参数 |
+| UPDATE | 支持 `SET 列=?`、`SET 列=同列+?`、`SET 列=同列-?`；`WHERE 主键=?`；WHERE 参数位于 SET 参数之后 |
 | DELETE | `WHERE 主键 = ?` |
 | INSERT | 必须**显式写出主键列**，且所有值都是 `?`（undo 是按主键 DELETE） |
-| 共同 | 表必须有**单列主键**；不支持 JOIN / 子查询 / 批量 / 多表 / 表别名 / 函数表达式 |
+| 共同 | 表必须有**单列主键**；不支持跨列计算、JOIN / 子查询 / 批量 / 多表 / 表别名 / 函数表达式 |
 
 ```java
-// ❌ 不支持：SET 的值是表达式（balance-?），不是 "?"
+// ✅ 支持：目标列自身参与的算术组合
 jdbc.update("UPDATE account SET balance=balance-? WHERE id=?", amount, userId);
-// ❌ 不支持：SET 的值是字面量 'PAID'，不是 "?"
+jdbc.update("UPDATE account SET balance=balance*?+? WHERE id=?", rate, bonus, userId);
+// ✅ 支持：标量字面量不占 JDBC 参数位置
 jdbc.update("UPDATE orders SET status='PAID' WHERE id=?", orderId);
 
-// ✅ 正确：先读旧值、在 Java 里算出新值，再整体写入
-Integer balance = jdbc.queryForObject("SELECT balance FROM account WHERE id=?", Integer.class, userId);
-jdbc.update("UPDATE account SET balance=? WHERE id=?", balance - amount, userId);
-jdbc.update("UPDATE orders SET status=? WHERE id=?", "PAID", orderId);
+// ❌ 不支持：跨列计算，无法按当前保守规则验证表达式语义
+jdbc.update("UPDATE account SET balance=credit-? WHERE id=?", amount, userId);
 ```
 
-> AT 模式会对该行加全局锁（`easy_at_lock`），所以「先读再整体写」在并发下是安全的；
-> `easy-at-example-local` 的 `TransferService` 就是这种写法。
+> 无论正向 UPDATE 是直接赋值、字面量还是同列算术，Undo 都直接把
+> before image 中的旧值写回，不会通过反向计算猜测补偿结果。
 
 ## 准备数据库
 

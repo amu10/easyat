@@ -35,10 +35,14 @@ AtDataSource 拦截 JDBC PreparedStatement
 ```sql
 INSERT INTO account (id, balance) VALUES (?, ?)
 UPDATE account SET balance=? WHERE id=?
+UPDATE account SET balance=balance-? WHERE id=?
+UPDATE account SET balance=balance+? WHERE id=?
+UPDATE account SET balance=balance*?+? WHERE id=?
+UPDATE account SET status='PAID' WHERE id=?
 DELETE FROM account WHERE id=?
 ```
 
-表必须有单列主键（通过 JDBC 元数据识别，不依赖 `id` 命名），`UPDATE` 和 `DELETE` 的 `WHERE` 条件必须精确匹配主键。多表 DML、批量更新、子查询、函数表达式、存储过程、DDL、无主键表会在业务 SQL 执行前抛出 `UnsupportedAtSqlException`，避免生成不可靠的 undo log。
+表必须有单列主键（通过 JDBC 元数据识别，不依赖 `id` 命名），`UPDATE` 和 `DELETE` 的 `WHERE` 条件必须精确匹配主键。UPDATE 赋值支持参数、标量字面量，以及目标列自身参与的 `+`、`-`、`*`、`/`、`%` 算术组合；跨列计算、函数、多表 DML、批量更新、子查询、存储过程、DDL、无主键表仍会在业务 SQL 执行前抛出 `UnsupportedAtSqlException`。
 
 ## 跨服务 AT 协调
 

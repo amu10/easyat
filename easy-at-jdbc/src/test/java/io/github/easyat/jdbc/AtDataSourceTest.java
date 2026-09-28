@@ -60,6 +60,123 @@ class AtDataSourceTest {
     }
 
     @Test
+    void capturesAndRollsBackSameColumnArithmeticUpdate() throws Exception {
+        JdbcDataSource raw = new JdbcDataSource();
+        raw.setURL("jdbc:h2:mem:arithmeticUpdate;MODE=MySQL;DB_CLOSE_DELAY=-1");
+        try (Connection c = raw.getConnection();
+                Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE account (id BIGINT PRIMARY KEY, balance INT)");
+            s.execute("INSERT INTO account(id,balance) VALUES(1,100)");
+        }
+        MemoryRepo repo = new MemoryRepo();
+        MemoryLocks locks = new MemoryLocks();
+        AtTransactionManager manager =
+                new AtTransactionManager(
+                        repo,
+                        new JdbcUndoExecutor(
+                                Collections.<String, DataSource>singletonMap("dataSource", raw)),
+                        locks,
+                        3);
+        AtDataSource dataSource = new AtDataSource("dataSource", raw, manager, locks);
+        AtTransaction tx = manager.begin("arithmetic-decrease", 10000);
+
+        try (Connection c = dataSource.getConnection();
+                PreparedStatement s =
+                        c.prepareStatement("UPDATE account SET balance=balance-? WHERE id=?")) {
+            s.setInt(1, 30);
+            s.setLong(2, 1L);
+            assertEquals(1, s.executeUpdate());
+        }
+
+        UndoRecord undo = repo.find(tx.getXid()).get().getUndoRecords().get(0);
+        assertEquals(100, undo.getBeforeImage().getColumns().get("BALANCE"));
+        assertEquals(70, undo.getAfterImage().getColumns().get("BALANCE"));
+
+        manager.rollback(tx.getXid());
+        try (Connection c = raw.getConnection();
+                Statement s = c.createStatement();
+                ResultSet result = s.executeQuery("SELECT balance FROM account WHERE id=1")) {
+            result.next();
+            assertEquals(100, result.getInt(1));
+        }
+    }
+
+    @Test
+    void locatesWhereParameterAfterComplexOrLiteralAssignments() throws Exception {
+        JdbcDataSource raw = new JdbcDataSource();
+        raw.setURL("jdbc:h2:mem:expressionParameters;MODE=MySQL;DB_CLOSE_DELAY=-1");
+        try (Connection c = raw.getConnection();
+                Statement s = c.createStatement()) {
+            s.execute(
+                    "CREATE TABLE account (id BIGINT PRIMARY KEY, balance INT, status VARCHAR(20))");
+            s.execute("INSERT INTO account(id,balance,status) VALUES(1,100,'OPEN')");
+        }
+        MemoryRepo repo = new MemoryRepo();
+        MemoryLocks locks = new MemoryLocks();
+        AtTransactionManager manager =
+                new AtTransactionManager(
+                        repo,
+                        new JdbcUndoExecutor(
+                                Collections.<String, DataSource>singletonMap("dataSource", raw)),
+                        locks,
+                        3);
+        AtDataSource dataSource = new AtDataSource("dataSource", raw, manager, locks);
+        AtTransaction tx = manager.begin("expression-parameters", 10000);
+
+        try (Connection c = dataSource.getConnection();
+                PreparedStatement s =
+                        c.prepareStatement("UPDATE account SET balance=balance*?+? WHERE id=?")) {
+            s.setInt(1, 2);
+            s.setInt(2, 5);
+            s.setLong(3, 1L);
+            assertEquals(1, s.executeUpdate());
+        }
+        try (Connection c = dataSource.getConnection();
+                PreparedStatement s =
+                        c.prepareStatement("UPDATE account SET status='PAID' WHERE id=?")) {
+            s.setLong(1, 1L);
+            assertEquals(1, s.executeUpdate());
+        }
+
+        AtTransaction persisted = repo.find(tx.getXid()).get();
+        assertEquals(2, persisted.getUndoRecords().size());
+        manager.rollback(tx.getXid());
+
+        try (Connection c = raw.getConnection();
+                Statement s = c.createStatement();
+                ResultSet result =
+                        s.executeQuery("SELECT balance,status FROM account WHERE id=1")) {
+            result.next();
+            assertEquals(100, result.getInt(1));
+            assertEquals("OPEN", result.getString(2));
+        }
+    }
+
+    @Test
+    void rejectsCrossColumnUpdateExpressions() throws Exception {
+        JdbcDataSource raw = new JdbcDataSource();
+        raw.setURL("jdbc:h2:mem:crossColumn;MODE=MySQL;DB_CLOSE_DELAY=-1");
+        try (Connection c = raw.getConnection();
+                Statement s = c.createStatement()) {
+            s.execute("CREATE TABLE account (id BIGINT PRIMARY KEY, balance INT, credit INT)");
+            s.execute("INSERT INTO account VALUES(1,100,10)");
+        }
+        MemoryRepo repo = new MemoryRepo();
+        MemoryLocks locks = new MemoryLocks();
+        AtTransactionManager manager = new AtTransactionManager(repo, record -> {}, locks, 3);
+        AtDataSource dataSource = new AtDataSource("dataSource", raw, manager, locks);
+        manager.begin("cross-column", 10000);
+
+        try (Connection c = dataSource.getConnection();
+                PreparedStatement s =
+                        c.prepareStatement("UPDATE account SET balance=credit-? WHERE id=?")) {
+            s.setInt(1, 1);
+            s.setLong(2, 1L);
+            assertThrows(UnsupportedAtSqlException.class, s::executeUpdate);
+        }
+    }
+
+    @Test
     void rejectsRollbackWhenTheAfterImageWasChanged() throws Exception {
         JdbcDataSource raw = new JdbcDataSource();
         raw.setURL("jdbc:h2:mem:dirty;MODE=MySQL;DB_CLOSE_DELAY=-1");

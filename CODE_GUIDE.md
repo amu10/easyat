@@ -52,7 +52,7 @@ easyAt 是 **AT（Automatic Transaction）模式** 的嵌入式分布式事务�
 2. 执行原始 DML。
 3. 成功走 `after()`（回填 after image），失败走 `abort()`（丢弃 undo）。
 
-**SQL 支持范围**：只接受带主键精确条件的单行 INSERT/UPDATE/DELETE，值必须是 `?` 占位符。其余一律抛 `UnsupportedAtSqlException`（见 `SqlUndoLogGenerator.reject()` / `unsupported()`）。
+**SQL 支持范围**：只接受带主键精确条件的单行 INSERT/UPDATE/DELETE。UPDATE 支持参数、标量字面量，以及目标列自身参与的 `+`、`-`、`*`、`/`、`%` 算术组合；其余表达式一律抛 `UnsupportedAtSqlException`（见 `UpdateExpressionAnalyzer` 与 `SqlUndoLogGenerator.unsupported()`）。
 
 三种 DML 的 undo 逻辑（`SqlUndoLogGenerator.update/delete/insert`）：
 
@@ -208,6 +208,7 @@ PreparedStatement 的 `setInt`、`setLong`、`setObject` 等参数会按下标�
 
 ```sql
 UPDATE account SET balance=? WHERE id=?
+UPDATE account SET balance=balance-? WHERE id=?
 ```
 
 捕获过程：
@@ -221,7 +222,7 @@ UPDATE account SET balance=? WHERE id=?
 UPDATE account SET balance=? WHERE id=?
 ```
 
-反向 SQL 外形相同，但第一个参数保存的是旧余额。
+无论正向 SQL 是直接赋值、标量字面量还是同列算术组合，反向 SQL 都是直接写回 before image。因此 `balance=balance-?` 不需要生成容易出错的 `balance=balance+?`，Undo 参数始终保存旧值。
 
 ### DELETE
 
@@ -404,7 +405,7 @@ GET /demo/undo-logs
 
 ### 报 `Unsupported AT SQL`
 
-检查是否包含 JOIN、OR、IN、子查询、批量 SQL、表达式更新、非主键 WHERE 或直接拼接常量。当前实现宁可拒绝，也不会猜测补偿 SQL。
+检查是否包含 JOIN、OR、IN、子查询、批量 SQL、跨列或函数表达式更新、非主键 WHERE。当前实现允许标量字面量与目标列自身的算术组合，其余形式宁可拒绝，也不会猜测补偿 SQL。
 
 ### 启动时报多个 `DataSource` 无法选择
 
