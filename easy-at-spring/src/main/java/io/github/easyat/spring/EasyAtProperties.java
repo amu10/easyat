@@ -223,6 +223,7 @@ public class EasyAtProperties {
     public static class Sql {
         private boolean strict = true;
         private String dialect;
+        private int maxAffectedRows = 1;
 
         public boolean isStrict() {
             return strict;
@@ -238,6 +239,17 @@ public class EasyAtProperties {
 
         public void setDialect(String v) {
             this.dialect = v;
+        }
+
+        /** Maximum rows allowed for an explicit primary-key IN predicate. */
+        public int getMaxAffectedRows() {
+            return maxAffectedRows;
+        }
+
+        public void setMaxAffectedRows(int maxAffectedRows) {
+            if (maxAffectedRows < 1)
+                throw new IllegalArgumentException("easy-at.sql.max-affected-rows must be >= 1");
+            this.maxAffectedRows = maxAffectedRows;
         }
     }
 

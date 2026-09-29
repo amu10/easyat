@@ -17,10 +17,10 @@
 |---|---|---|---|
 | 0 | 单行主键 DML、同列 `+?/-?` | 已完成 | 当前 `SqlUndoLogGenerator` 与回滚测试 |
 | 1 | AST 表达式分析和参数定位 | 已完成 | `UpdateExpressionAnalyzer`、字面量及算术表达式支持 |
-| 2 | SQL Recognizer / Executor 分层 | 待实施 | UPDATE/DELETE/INSERT 独立执行器 |
-| 3 | 常用函数与方言能力矩阵 | 待实施 | 函数白名单、MySQL/PostgreSQL 方言测试 |
-| 4 | 多行 UPDATE/DELETE | 待实施 | 多行镜像、多锁键、影响行数上限 |
-| 5 | JDBC Batch | 待实施 | 参数批次快照、批量 Undo 项 |
+| 2 | SQL Recognizer / Executor 分层 | 已完成 | UPDATE/DELETE/INSERT 独立识别器与执行器 |
+| 3 | 常用函数与方言能力矩阵 | 已完成 | 函数白名单、MySQL/PostgreSQL 方言测试 |
+| 4 | 多行 UPDATE/DELETE | 已完成（主键 IN） | 多行镜像、多锁键、影响行数上限 |
+| 5 | JDBC Batch | 已完成 | 参数批次快照、批量 Undo 项 |
 | 6 | 多数据源 Undo 路由 | 待实施 | 协调库与业务库分离、跨资源逆序回滚 |
 
 ## 3. 阶段 1：表达式分析和参数定位
@@ -86,7 +86,7 @@ Recognizer 只负责解析和生成执行计划；Executor 负责镜像、锁、
 
 ## 6. 阶段 4：多行 UPDATE/DELETE
 
-执行前根据原始 WHERE 查询所有受影响行和主键，按稳定顺序获取多个全局锁，保存多行 before image；执行后按主键集合查询 after image。
+当前安全范围限定为显式主键 `IN (?,...)`。执行前按参数得到全部主键，排序后获取多个全局锁并保存逐行 before image；执行后逐行查询 after image。
 
 必须增加：
 
@@ -94,14 +94,16 @@ Recognizer 只负责解析和生成执行计划；Executor 负责镜像、锁、
 - 主键排序，降低多事务锁顺序死锁；
 - 多行 `TableRecords` 数据模型；
 - 回滚逐行或分批执行；
-- WHERE 参数重放；
+- 主键 IN 参数重放；
 - 执行结果行数与镜像行数校验。
 
-默认仍只允许单行；用户显式配置后才开放多行。
+默认仍只允许单行；用户通过 `easy-at.sql.max-affected-rows` 显式配置后才开放多行。任意范围条件留待后续独立设计。
 
 ## 7. 阶段 5：JDBC Batch
 
 代理 `addBatch/clearBatch/executeBatch`，每组参数形成独立执行计划和 Undo 项。任何一组捕获失败时，整批在执行前失败。
+
+同一个 Batch 内暂不允许重复修改同一个资源、表和主键，避免最终 after image 无法对应中间状态。
 
 ### 验收条件
 

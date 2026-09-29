@@ -71,18 +71,35 @@ public final class AtDataSource implements DataSource {
             LocalTransactionBridge bridge,
             boolean requireLocalTransaction,
             BranchRegistrar registrar) {
-        this.resourceId = resourceId;
-        this.delegate = delegate;
-        this.bridge = bridge;
-        this.requireLocalTransaction = requireLocalTransaction;
-        this.generator =
-                new SqlUndoLogGenerator(
-                        resourceId,
-                        manager,
-                        locks,
-                        bridge,
-                        AtSqlDialects.detect(delegate),
-                        registrar);
+        this(
+                resourceId,
+                delegate,
+                () -> manager,
+                () -> locks,
+                bridge,
+                requireLocalTransaction,
+                registrar,
+                1);
+    }
+
+    public AtDataSource(
+            String resourceId,
+            DataSource delegate,
+            AtTransactionManager manager,
+            GlobalLockManager locks,
+            LocalTransactionBridge bridge,
+            boolean requireLocalTransaction,
+            BranchRegistrar registrar,
+            int maxAffectedRows) {
+        this(
+                resourceId,
+                delegate,
+                () -> manager,
+                () -> locks,
+                bridge,
+                requireLocalTransaction,
+                registrar,
+                maxAffectedRows);
     }
 
     public AtDataSource(
@@ -93,6 +110,18 @@ public final class AtDataSource implements DataSource {
             LocalTransactionBridge bridge,
             boolean requireLocalTransaction,
             BranchRegistrar registrar) {
+        this(resourceId, delegate, manager, locks, bridge, requireLocalTransaction, registrar, 1);
+    }
+
+    public AtDataSource(
+            String resourceId,
+            DataSource delegate,
+            java.util.function.Supplier<AtTransactionManager> manager,
+            java.util.function.Supplier<GlobalLockManager> locks,
+            LocalTransactionBridge bridge,
+            boolean requireLocalTransaction,
+            BranchRegistrar registrar,
+            int maxAffectedRows) {
         this.resourceId = resourceId;
         this.delegate = delegate;
         this.bridge = bridge;
@@ -104,7 +133,8 @@ public final class AtDataSource implements DataSource {
                         locks,
                         bridge,
                         AtSqlDialects.detect(delegate),
-                        registrar);
+                        registrar,
+                        maxAffectedRows);
     }
 
     public DataSource getDelegate() {
@@ -160,6 +190,7 @@ public final class AtDataSource implements DataSource {
         private final PreparedStatement target;
         private final String sql;
         private final Map<Integer, Object> params = new HashMap<Integer, Object>();
+        private final List<Map<Integer, Object>> batches = new ArrayList<Map<Integer, Object>>();
 
         StatementHandler(PreparedStatement target, String sql) {
             this.target = target;
@@ -180,22 +211,34 @@ public final class AtDataSource implements DataSource {
                 params.clear();
                 return call(target, method, args);
             }
+            if (name.equals("addBatch") && (args == null || args.length == 0)) {
+                Object result = call(target, method, args);
+                batches.add(new HashMap<Integer, Object>(params));
+                return result;
+            }
+            if (name.equals("clearBatch")) {
+                batches.clear();
+                return call(target, method, args);
+            }
+            if ((name.equals("executeBatch") || name.equals("executeLargeBatch"))
+                    && AtContext.active()
+                    && !AtContext.undoing()) {
+                requireLocalTransaction();
+                return executeBatch(method, args);
+            }
             // 仅当「处于 AT 事务中」且「当前不是在执行框架自己的 undo SQL」时才介入
             if ((name.equals("executeUpdate")
                             || name.equals("execute")
                             || name.equals("executeLargeUpdate"))
                     && AtContext.active()
                     && !AtContext.undoing()) {
-                if (requireLocalTransaction && !bridge.isActive())
-                    throw new AtException(
-                            "easyAt requires a Spring local transaction on resource '"
-                                    + resourceId
-                                    + "'; annotate the method with @Transactional");
+                requireLocalTransaction();
                 Connection connection = target.getConnection();
                 // capture：解析 SQL、查 before image、抢全局锁、写 undo log
                 SqlUndoLogGenerator.Capture capture = generator.capture(connection, sql, params);
                 try {
                     Object result = call(target, method, args);
+                    validateDmlResult(name, result, capture);
                     generator.after(connection, capture);
                     return result;
                 } catch (Throwable failure) {
@@ -208,6 +251,97 @@ public final class AtDataSource implements DataSource {
                 }
             }
             return call(target, method, args);
+        }
+
+        private Object executeBatch(Method method, Object[] args) throws Throwable {
+            if (batches.isEmpty()) return call(target, method, args);
+            Connection connection = target.getConnection();
+            List<SqlUndoLogGenerator.Capture> captures =
+                    new ArrayList<SqlUndoLogGenerator.Capture>(batches.size());
+            try {
+                Set<String> targets = new HashSet<String>();
+                for (Map<Integer, Object> parameters : batches) {
+                    SqlUndoLogGenerator.Capture capture =
+                            generator.capture(connection, sql, parameters);
+                    captures.add(capture);
+                    if (capture != null)
+                        for (SqlUndoLogGenerator.Capture leaf : capture.leaves())
+                            if (!targets.add(
+                                    leaf.table
+                                            + "\u0000"
+                                            + leaf.pk
+                                            + "\u0000"
+                                            + String.valueOf(leaf.key)))
+                                throw new UnsupportedAtSqlException(
+                                        "A JDBC batch may not modify the same AT row more than once: "
+                                                + leaf.table
+                                                + "."
+                                                + leaf.key);
+                }
+                Object result = call(target, method, args);
+                validateBatchResult(result, captures.size());
+                for (SqlUndoLogGenerator.Capture capture : captures)
+                    generator.after(connection, capture);
+                return result;
+            } catch (Throwable failure) {
+                for (int i = captures.size() - 1; i >= 0; i--) {
+                    try {
+                        generator.abort(connection, captures.get(i));
+                    } catch (Throwable cleanup) {
+                        failure.addSuppressed(cleanup);
+                    }
+                }
+                throw failure;
+            } finally {
+                batches.clear();
+            }
+        }
+
+        private void requireLocalTransaction() {
+            if (requireLocalTransaction && !bridge.isActive())
+                throw new AtException(
+                        "easyAt requires a Spring local transaction on resource '"
+                                + resourceId
+                                + "'; annotate the method with @Transactional");
+        }
+
+        private void validateBatchResult(Object result, int expected) {
+            int actual;
+            if (result instanceof int[]) {
+                int[] counts = (int[]) result;
+                actual = counts.length;
+                for (int count : counts)
+                    if (count == Statement.EXECUTE_FAILED)
+                        throw new AtException("JDBC batch contains a failed AT statement");
+            } else if (result instanceof long[]) {
+                long[] counts = (long[]) result;
+                actual = counts.length;
+                for (long count : counts)
+                    if (count == Statement.EXECUTE_FAILED)
+                        throw new AtException("JDBC batch contains a failed AT statement");
+            } else {
+                throw new AtException("Unexpected JDBC batch result: " + result);
+            }
+            if (actual != expected)
+                throw new AtException(
+                        "JDBC batch result count " + actual + " does not match " + expected);
+        }
+
+        private void validateDmlResult(
+                String methodName, Object result, SqlUndoLogGenerator.Capture capture)
+                throws SQLException {
+            if (capture == null) return;
+            long actual;
+            if ("executeUpdate".equals(methodName)) actual = ((Integer) result).longValue();
+            else if ("executeLargeUpdate".equals(methodName)) actual = ((Long) result).longValue();
+            else actual = target.getUpdateCount();
+            int expected = capture.leaves().size();
+            if (actual != expected)
+                throw new AtException(
+                        "AT row image count "
+                                + expected
+                                + " does not match JDBC affected rows "
+                                + actual);
         }
     }
 

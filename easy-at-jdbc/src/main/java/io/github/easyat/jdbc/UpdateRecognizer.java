@@ -8,6 +8,16 @@ import net.sf.jsqlparser.statement.update.Update;
 import net.sf.jsqlparser.statement.update.UpdateSet;
 
 final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer.Plan> {
+    private final int maxAffectedRows;
+
+    UpdateRecognizer() {
+        this(1);
+    }
+
+    UpdateRecognizer(int maxAffectedRows) {
+        this.maxAffectedRows = Math.max(1, maxAffectedRows);
+    }
+
     @Override
     public Plan recognize(Update update, AtSqlDialect dialect) {
         RecognizerSupport.reject(
@@ -33,6 +43,9 @@ final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer
             columns.add(set.getColumn(0).getColumnName());
             parameterCount += count;
         }
+        RecognizerSupport.PredicatePlan predicate =
+                RecognizerSupport.primaryKeyPredicate(
+                        update.getWhere(), update.toString(), maxAffectedRows);
         return new Plan(
                 table,
                 rawTable,
@@ -40,7 +53,8 @@ final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer
                         RecognizerSupport.identifier(table.getSchemaName()), table.getName()),
                 columns,
                 parameterCount,
-                RecognizerSupport.primaryKeyPredicate(update.getWhere(), update.toString()));
+                predicate.column,
+                predicate.parameterCount);
     }
 
     static final class Plan {
@@ -50,6 +64,7 @@ final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer
         final List<String> columns;
         final int assignmentParameterCount;
         final String primaryKeyColumn;
+        final int predicateParameterCount;
 
         Plan(
                 Table table,
@@ -57,13 +72,15 @@ final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer
                 String tableRef,
                 List<String> columns,
                 int assignmentParameterCount,
-                String primaryKeyColumn) {
+                String primaryKeyColumn,
+                int predicateParameterCount) {
             this.table = table;
             this.rawTable = rawTable;
             this.tableRef = tableRef;
             this.columns = Collections.unmodifiableList(new ArrayList<String>(columns));
             this.assignmentParameterCount = assignmentParameterCount;
             this.primaryKeyColumn = primaryKeyColumn;
+            this.predicateParameterCount = predicateParameterCount;
         }
     }
 }

@@ -6,6 +6,7 @@ import io.github.easyat.core.UndoRecord;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -18,8 +19,29 @@ final class DeleteAtExecutor implements AtStatementExecutor<DeleteRecognizer.Pla
             DeleteRecognizer.Plan plan,
             Map<Integer, Object> parameters)
             throws SQLException {
-        Object key = SqlUndoLogGenerator.require(parameters, 1);
         SqlUndoLogGenerator.assertPrimaryKey(connection, plan.table, plan.primaryKeyColumn);
+        List<Object> keys = new ArrayList<Object>(plan.predicateParameterCount);
+        for (int i = 0; i < plan.predicateParameterCount; i++)
+            keys.add(SqlUndoLogGenerator.require(parameters, i + 1));
+        keys.sort(Comparator.comparing(String::valueOf));
+        List<SqlUndoLogGenerator.Capture> captures =
+                new ArrayList<SqlUndoLogGenerator.Capture>(keys.size());
+        try {
+            for (Object key : keys) captures.add(executeOne(context, connection, xid, plan, key));
+        } catch (SQLException | RuntimeException failure) {
+            context.abort(connection, new SqlUndoLogGenerator.Capture(captures));
+            throw failure;
+        }
+        return captures.size() == 1 ? captures.get(0) : new SqlUndoLogGenerator.Capture(captures);
+    }
+
+    private SqlUndoLogGenerator.Capture executeOne(
+            SqlUndoLogGenerator context,
+            Connection connection,
+            String xid,
+            DeleteRecognizer.Plan plan,
+            Object key)
+            throws SQLException {
         context.lock(plan.rawTable, key, xid);
         RowImage before = context.selectAll(connection, plan.rawTable, plan.primaryKeyColumn, key);
         if (before == null)

@@ -14,7 +14,6 @@ import net.sf.jsqlparser.statement.Statement;
 import net.sf.jsqlparser.statement.delete.Delete;
 import net.sf.jsqlparser.statement.insert.Insert;
 import net.sf.jsqlparser.statement.update.Update;
-import net.sf.jsqlparser.statement.update.UpdateSet;
 
 /**
  * 用 JSqlParser 解析受限的单行 DML，并生成对应的 before/after image 与 undo SQL。
@@ -40,9 +39,9 @@ final class SqlUndoLogGenerator {
     private final LocalTransactionBridge bridge;
     private final AtSqlDialect dialect;
     private final BranchRegistrar registrar;
-    private final UpdateRecognizer updateRecognizer = new UpdateRecognizer();
-    private final DeleteRecognizer deleteRecognizer = new DeleteRecognizer();
-    private final InsertRecognizer insertRecognizer = new InsertRecognizer();
+    private final UpdateRecognizer updateRecognizer;
+    private final DeleteRecognizer deleteRecognizer;
+    private final InsertRecognizer insertRecognizer;
     private final UpdateAtExecutor updateExecutor = new UpdateAtExecutor();
     private final DeleteAtExecutor deleteExecutor = new DeleteAtExecutor();
     private final InsertAtExecutor insertExecutor = new InsertAtExecutor();
@@ -91,12 +90,26 @@ final class SqlUndoLogGenerator {
             LocalTransactionBridge bridge,
             AtSqlDialect dialect,
             BranchRegistrar registrar) {
+        this(resourceId, manager, locks, bridge, dialect, registrar, 1);
+    }
+
+    SqlUndoLogGenerator(
+            String resourceId,
+            java.util.function.Supplier<AtTransactionManager> manager,
+            java.util.function.Supplier<GlobalLockManager> locks,
+            LocalTransactionBridge bridge,
+            AtSqlDialect dialect,
+            BranchRegistrar registrar,
+            int maxAffectedRows) {
         this.resourceId = resourceId;
         this.manager = manager;
         this.locks = locks;
         this.bridge = bridge;
         this.dialect = dialect == null ? new GenericAtSqlDialect() : dialect;
         this.registrar = registrar == null ? BranchRegistrar.NOOP : registrar;
+        this.updateRecognizer = new UpdateRecognizer(maxAffectedRows);
+        this.deleteRecognizer = new DeleteRecognizer(maxAffectedRows);
+        this.insertRecognizer = new InsertRecognizer();
     }
 
     void setAfterCommitHook(Runnable hook) {
@@ -136,161 +149,35 @@ final class SqlUndoLogGenerator {
         throw unsupported(sql);
     }
 
-    private Capture update(Connection c, String xid, Update u, Map<Integer, Object> p)
-            throws SQLException {
-        // 拒绝多表 JOIN / LIMIT / ORDER BY 等复杂形态，只保留单表单行
-        reject(
-                u.getWithItemsList() != null
-                        || u.getFromItem() != null
-                        || notEmpty(u.getJoins())
-                        || u.getLimit() != null
-                        || notEmpty(u.getOrderByElements()),
-                u.toString());
-        Table parsed = u.getTable();
-        String rawTable = tableName(parsed);
-        if (internal(rawTable)) return null;
-        String tableRef = dialect.quoteTable(identifier(parsed.getSchemaName()), parsed.getName());
-        List<String> columns = new ArrayList<String>();
-        int updateParameterCount = 0;
-        for (UpdateSet set : u.getUpdateSets()) {
-            int parameterCount =
-                    set.getColumns().size() == 1 && set.getValues().size() == 1
-                            ? UpdateExpressionAnalyzer.parameterCount(
-                                    set.getColumn(0), set.getValue(0), dialect)
-                            : -1;
-            reject(
-                    set.getColumns().size() != 1
-                            || set.getValues().size() != 1
-                            || parameterCount < 0,
-                    u.toString());
-            columns.add(set.getColumn(0).getColumnName());
-            updateParameterCount += parameterCount;
-        }
-        Where where = where(u.getWhere(), u.toString());
-        Object key = require(p, updateParameterCount + 1);
-        assertPrimaryKey(c, parsed, where.column);
-        lock(rawTable, key, xid);
-        // 查 before image（被更新列的旧值）
-        RowImage before = select(c, rawTable, columns, where.column, key);
-        if (before == null)
-            throw new AtException("UPDATE target does not exist: " + rawTable + "." + key);
-        // undo = 反向 UPDATE，把每列改回旧值
-        StringBuilder undo = new StringBuilder("UPDATE ").append(tableRef).append(" SET ");
-        Object[] values = new Object[columns.size() + 1];
-        for (int i = 0; i < columns.size(); i++) {
-            if (i > 0) undo.append(',');
-            undo.append(dialect.quoteIdentifier(columns.get(i))).append("=?");
-            values[i] = column(before, columns.get(i));
-        }
-        undo.append(" WHERE ").append(dialect.quoteIdentifier(where.column)).append("=?");
-        values[values.length - 1] = key;
-        UndoRecord r = record(xid, tableRef, where.column, key, undo.toString(), values, before);
-        manager.get().append(c, r);
-        return new Capture(r, rawTable, where.column, key);
-    }
-
-    private Capture delete(Connection c, String xid, Delete d, Map<Integer, Object> p)
-            throws SQLException {
-        reject(
-                d.getWithItemsList() != null
-                        || notEmpty(d.getTables())
-                        || notEmpty(d.getUsingList())
-                        || notEmpty(d.getJoins())
-                        || d.getLimit() != null
-                        || notEmpty(d.getOrderByElements()),
-                d.toString());
-        Table parsed = d.getTable();
-        String rawTable = tableName(parsed);
-        if (internal(rawTable)) return null;
-        String tableRef = dialect.quoteTable(identifier(parsed.getSchemaName()), parsed.getName());
-        Where where = where(d.getWhere(), d.toString());
-        Object key = require(p, 1);
-        assertPrimaryKey(c, parsed, where.column);
-        lock(rawTable, key, xid);
-        // before image = 被删行的完整内容，undo = 按列 INSERT 回原行
-        RowImage before = selectAll(c, rawTable, where.column, key);
-        if (before == null)
-            throw new AtException("DELETE target does not exist: " + rawTable + "." + key);
-        List<String> cols = new ArrayList<String>(before.getColumns().keySet());
-        StringBuilder undo = new StringBuilder("INSERT INTO ").append(tableRef).append(" (");
-        for (int i = 0; i < cols.size(); i++) {
-            if (i > 0) undo.append(',');
-            undo.append(dialect.quoteIdentifier(cols.get(i)));
-        }
-        undo.append(") VALUES (");
-        Object[] vals = new Object[cols.size()];
-        for (int i = 0; i < cols.size(); i++) {
-            if (i > 0) undo.append(',');
-            undo.append('?');
-            vals[i] = before.getColumns().get(cols.get(i));
-        }
-        undo.append(')');
-        UndoRecord r = record(xid, tableRef, where.column, key, undo.toString(), vals, before);
-        manager.get().append(c, r);
-        return new Capture(r, rawTable, where.column, key);
-    }
-
-    private Capture insert(Connection c, String xid, Insert in, Map<Integer, Object> p)
-            throws SQLException {
-        reject(
-                in.getWithItemsList() != null
-                        || in.getColumns() == null
-                        || in.getValues() == null
-                        || in.getConflictAction() != null
-                        || notEmpty(in.getDuplicateUpdateSets())
-                        || notEmpty(in.getSetUpdateSets()),
-                in.toString());
-        Table parsed = in.getTable();
-        String rawTable = tableName(parsed);
-        if (internal(rawTable)) return null;
-        String tableRef = dialect.quoteTable(identifier(parsed.getSchemaName()), parsed.getName());
-        List<String> columns = new ArrayList<String>();
-        for (Column column : in.getColumns()) columns.add(column.getColumnName());
-        List<?> values = in.getValues().getExpressions();
-        reject(columns.size() != values.size(), in.toString());
-        for (Object value : values) reject(!(value instanceof JdbcParameter), in.toString());
-        // INSERT 必须显式携带主键，否则无法生成按主键 DELETE 的 undo
-        String pk = findPrimaryKey(c, parsed);
-        int pkIndex = indexOf(columns, pk);
-        if (pkIndex < 0)
-            throw new AtException(
-                    "INSERT must explicitly include primary key " + pk + " for AT undo");
-        Object key = require(p, pkIndex + 1);
-        lock(rawTable, key, xid);
-        // undo = 按主键 DELETE（before image 为 null，after image 在 after() 里回填）
-        UndoRecord r =
-                record(
-                        xid,
-                        tableRef,
-                        columns.get(pkIndex),
-                        key,
-                        "DELETE FROM "
-                                + tableRef
-                                + " WHERE "
-                                + dialect.quoteIdentifier(columns.get(pkIndex))
-                                + "=?",
-                        new Object[] {key},
-                        null);
-        manager.get().append(c, r);
-        return new Capture(r, rawTable, columns.get(pkIndex), key);
-    }
-
     /** DML 执行成功后回填 after image；若存在本地事务则在提交后再触发 afterCommit 钩子（分支提交用）。 */
     void after(Connection c, Capture capture) throws SQLException {
         if (capture == null) return;
+        afterImages(c, capture);
+        if (bridge != null && bridge.isActive() && afterCommitHook != null)
+            bridge.afterCommit(afterCommitHook);
+    }
+
+    private void afterImages(Connection c, Capture capture) throws SQLException {
+        if (capture.children != null) {
+            for (Capture child : capture.children) afterImages(c, child);
+            return;
+        }
         RowImage image = selectAll(c, capture.table, capture.pk, capture.key);
         if (image == null && capture.record.getBeforeImage() == null)
             throw new AtException(
                     "INSERT did not create expected row: " + capture.table + "." + capture.key);
         manager.get().updateUndo(c, capture.record.getXid(), capture.record.getId(), image);
-        if (bridge != null && bridge.isActive() && afterCommitHook != null)
-            bridge.afterCommit(afterCommitHook);
     }
 
     /** DML 执行失败时丢弃已写入的 undo 记录，避免残留脏 undo。 */
     void abort(Connection c, Capture capture) {
-        if (capture != null)
-            manager.get().discardUndo(c, capture.record.getXid(), capture.record.getId());
+        if (capture == null) return;
+        if (capture.children != null) {
+            for (int i = capture.children.size() - 1; i >= 0; i--)
+                abort(c, capture.children.get(i));
+            return;
+        }
+        manager.get().discardUndo(c, capture.record.getXid(), capture.record.getId());
     }
 
     UndoRecord record(
@@ -529,12 +416,29 @@ final class SqlUndoLogGenerator {
         final UndoRecord record;
         final String table, pk;
         final Object key;
+        final List<Capture> children;
 
         Capture(UndoRecord record, String table, String pk, Object key) {
             this.record = record;
             this.table = table;
             this.pk = pk;
             this.key = key;
+            this.children = null;
+        }
+
+        Capture(List<Capture> children) {
+            this.record = null;
+            this.table = null;
+            this.pk = null;
+            this.key = null;
+            this.children = Collections.unmodifiableList(new ArrayList<Capture>(children));
+        }
+
+        List<Capture> leaves() {
+            if (children == null) return Collections.singletonList(this);
+            List<Capture> leaves = new ArrayList<Capture>();
+            for (Capture child : children) leaves.addAll(child.leaves());
+            return leaves;
         }
     }
 }

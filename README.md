@@ -42,6 +42,10 @@ UPDATE account SET status='PAID' WHERE id=?
 DELETE FROM account WHERE id=?
 ```
 
+多行主键操作默认关闭，可通过 `easy-at.sql.max-affected-rows` 开放受限的
+`WHERE id IN (?,...)`。函数白名单、方言差异和 JDBC Batch 约束见
+[`SQL_COMPATIBILITY.md`](SQL_COMPATIBILITY.md)。
+
 表必须有单列主键（通过 JDBC 元数据识别，不依赖 `id` 命名），`UPDATE` 和 `DELETE` 的 `WHERE` 条件必须精确匹配主键。UPDATE 赋值支持参数、标量字面量，以及目标列自身参与的 `+`、`-`、`*`、`/`、`%` 算术组合；跨列计算、函数、多表 DML、批量更新、子查询、存储过程、DDL、无主键表仍会在业务 SQL 执行前抛出 `UnsupportedAtSqlException`。
 
 ## 跨服务 AT 协调

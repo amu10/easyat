@@ -6,18 +6,35 @@ import java.util.Collection;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.expression.JdbcParameter;
 import net.sf.jsqlparser.expression.operators.relational.EqualsTo;
+import net.sf.jsqlparser.expression.operators.relational.ExpressionList;
+import net.sf.jsqlparser.expression.operators.relational.InExpression;
 import net.sf.jsqlparser.schema.Column;
 import net.sf.jsqlparser.schema.Table;
 
 final class RecognizerSupport {
     private RecognizerSupport() {}
 
-    static String primaryKeyPredicate(Expression expression, String sql) {
-        if (!(expression instanceof EqualsTo)) throw unsupported(sql);
-        EqualsTo equal = (EqualsTo) expression;
-        if (!(equal.getLeftExpression() instanceof Column)
-                || !(equal.getRightExpression() instanceof JdbcParameter)) throw unsupported(sql);
-        return ((Column) equal.getLeftExpression()).getColumnName();
+    static PredicatePlan primaryKeyPredicate(Expression expression, String sql, int maxRows) {
+        if (expression instanceof EqualsTo) {
+            EqualsTo equal = (EqualsTo) expression;
+            if (equal.getLeftExpression() instanceof Column
+                    && equal.getRightExpression() instanceof JdbcParameter)
+                return new PredicatePlan(((Column) equal.getLeftExpression()).getColumnName(), 1);
+            throw unsupported(sql);
+        }
+        if (maxRows > 1 && expression instanceof InExpression) {
+            InExpression in = (InExpression) expression;
+            if (in.isNot()
+                    || !(in.getLeftExpression() instanceof Column)
+                    || !(in.getRightExpression() instanceof ExpressionList)) throw unsupported(sql);
+            ExpressionList<?> values = (ExpressionList<?>) in.getRightExpression();
+            if (values.isEmpty() || values.size() > maxRows) throw unsupported(sql);
+            for (Object value : values)
+                if (!(value instanceof JdbcParameter)) throw unsupported(sql);
+            return new PredicatePlan(
+                    ((Column) in.getLeftExpression()).getColumnName(), values.size());
+        }
+        throw unsupported(sql);
     }
 
     static String tableName(Table table) {
@@ -52,5 +69,15 @@ final class RecognizerSupport {
         return new UnsupportedAtSqlException(
                 "Unsupported AT SQL; only single-row INSERT/UPDATE/DELETE by primary key are allowed; UPDATE values may use parameters, scalar literals, whitelisted functions, or same-column arithmetic (+, -, *, /, %): "
                         + sql);
+    }
+
+    static final class PredicatePlan {
+        final String column;
+        final int parameterCount;
+
+        PredicatePlan(String column, int parameterCount) {
+            this.column = column;
+            this.parameterCount = parameterCount;
+        }
     }
 }

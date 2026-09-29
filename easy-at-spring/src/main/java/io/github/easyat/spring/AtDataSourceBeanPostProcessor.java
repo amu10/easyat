@@ -53,6 +53,7 @@ public final class AtDataSourceBeanPostProcessor implements BeanPostProcessor {
                 () -> locks.getObject(),
                 new SpringTransactionBridge(),
                 properties.isRequireLocalTransaction(),
-                registrar);
+                registrar,
+                properties.getSql().getMaxAffectedRows());
     }
 }
