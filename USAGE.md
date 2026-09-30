@@ -250,7 +250,7 @@ public UndoDataEncryptor myEncryptor() {
 
 | 报错 | 原因 | 解决 |
 |---|---|---|
-| `UnsupportedAtSqlException` | 用了多表/批量/子查询/无主键/非 `?` 值 | 改成单行、带主键精确条件、占位符传值 |
+| `UnsupportedAtSqlException` | 使用多表、子查询、无主键、越过多行上限或不安全表达式 | 改成主键精确条件/主键 IN，并使用占位符传值 |
 | `Composite primary keys are not supported` | 表是复合主键 | AT 首版只支持单列主键 |
 | `INSERT must explicitly include primary key` | INSERT 没带主键 | 显式传主键值 |
 | `requires a Spring local transaction` | `production=true` 且方法无本地事务 | 加 `@Transactional` |

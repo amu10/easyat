@@ -223,7 +223,7 @@ public class EasyAtProperties {
     public static class Sql {
         private boolean strict = true;
         private String dialect;
-        private int maxAffectedRows = 1;
+        private int maxAffectedRows = 100;
 
         public boolean isStrict() {
             return strict;

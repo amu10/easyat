@@ -62,10 +62,13 @@ class MultiRowAtTest {
     }
 
     @Test
-    void remainsSingleRowByDefaultAndEnforcesConfiguredLimit() throws Exception {
-        Fixture single = new Fixture("singleDefault", 1);
-        single.manager.begin("single", 10000);
-        assertThrows(UnsupportedAtSqlException.class, () -> single.updateThreeRows());
+    void supportsMultipleRowsByDefaultAndEnforcesConfiguredLimit() throws Exception {
+        Fixture defaults = new Fixture("multiDefault");
+        AtTransaction transaction = defaults.manager.begin("default-multi", 10000);
+        defaults.updateThreeRows();
+        assertEquals(0, defaults.balance(1));
+        defaults.manager.rollback(transaction.getXid());
+        assertEquals(100, defaults.balance(1));
         AtContext.clear();
 
         Fixture limited = new Fixture("multiLimit", 2);
@@ -80,7 +83,11 @@ class MultiRowAtTest {
         final AtTransactionManager manager;
         final AtDataSource dataSource;
 
-        Fixture(String database, int maxRows) throws Exception {
+        Fixture(String database) throws Exception {
+            this(database, null);
+        }
+
+        Fixture(String database, Integer maxRows) throws Exception {
             raw.setURL("jdbc:h2:mem:" + database + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
             try (Connection connection = raw.getConnection();
                     Statement statement = connection.createStatement()) {
@@ -96,15 +103,17 @@ class MultiRowAtTest {
                             locks,
                             3);
             dataSource =
-                    new AtDataSource(
-                            "dataSource",
-                            raw,
-                            manager,
-                            locks,
-                            LocalTransactionBridge.NOOP,
-                            false,
-                            BranchRegistrar.NOOP,
-                            maxRows);
+                    maxRows == null
+                            ? new AtDataSource("dataSource", raw, manager, locks)
+                            : new AtDataSource(
+                                    "dataSource",
+                                    raw,
+                                    manager,
+                                    locks,
+                                    LocalTransactionBridge.NOOP,
+                                    false,
+                                    BranchRegistrar.NOOP,
+                                    maxRows.intValue());
         }
 
         void updateThreeRows() throws Exception {

@@ -67,7 +67,7 @@ final class RecognizerSupport {
 
     static UnsupportedAtSqlException unsupported(String sql) {
         return new UnsupportedAtSqlException(
-                "Unsupported AT SQL; only single-row INSERT/UPDATE/DELETE by primary key are allowed; UPDATE values may use parameters, scalar literals, whitelisted functions, or same-column arithmetic (+, -, *, /, %): "
+                "Unsupported AT SQL; only primary-key INSERT/UPDATE/DELETE and bounded primary-key IN updates/deletes are allowed; UPDATE values may use parameters, scalar literals, whitelisted functions, or same-column arithmetic (+, -, *, /, %): "
                         + sql);
     }
 

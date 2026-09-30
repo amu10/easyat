@@ -97,7 +97,7 @@ Recognizer 只负责解析和生成执行计划；Executor 负责镜像、锁、
 - 主键 IN 参数重放；
 - 执行结果行数与镜像行数校验。
 
-默认仍只允许单行；用户通过 `easy-at.sql.max-affected-rows` 显式配置后才开放多行。任意范围条件留待后续独立设计。
+默认支持最多 100 行；用户可通过 `easy-at.sql.max-affected-rows` 调整安全上限。任意范围条件留待后续独立设计。
 
 ## 7. 阶段 5：JDBC Batch
 

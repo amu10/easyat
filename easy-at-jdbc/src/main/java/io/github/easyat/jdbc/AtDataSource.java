@@ -11,7 +11,7 @@ import javax.sql.DataSource;
 /**
  * JDBC DataSource 代理，是 AT 事务「拦截点」。
  *
- * <p>它用 JDK 动态代理包装了 {@link Connection} 与 {@link PreparedStatement}，在受支持的单行 DML 真正执行<b>之前</b>，先完成三件
+ * <p>它用 JDK 动态代理包装了 {@link Connection} 与 {@link PreparedStatement}，在受支持的主键 DML 真正执行<b>之前</b>，先完成三件
  * AT 前置动作，再由 {@link SqlUndoLogGenerator} 生成并 持久化 undo log（见 {@link AtContext#active()} 与 {@link
  * AtContext#undoing()} 两个开关）：
  *
@@ -25,6 +25,9 @@ import javax.sql.DataSource;
  * AtContext#undoing()} 标记被显式放行，不重复代理。
  */
 public final class AtDataSource implements DataSource {
+    /** Default safety cap for one explicit primary-key IN statement. */
+    public static final int DEFAULT_MAX_AFFECTED_ROWS = 100;
+
     private final String resourceId;
     private final DataSource delegate;
     private final SqlUndoLogGenerator generator;
@@ -79,7 +82,7 @@ public final class AtDataSource implements DataSource {
                 bridge,
                 requireLocalTransaction,
                 registrar,
-                1);
+                DEFAULT_MAX_AFFECTED_ROWS);
     }
 
     public AtDataSource(
@@ -110,7 +113,15 @@ public final class AtDataSource implements DataSource {
             LocalTransactionBridge bridge,
             boolean requireLocalTransaction,
             BranchRegistrar registrar) {
-        this(resourceId, delegate, manager, locks, bridge, requireLocalTransaction, registrar, 1);
+        this(
+                resourceId,
+                delegate,
+                manager,
+                locks,
+                bridge,
+                requireLocalTransaction,
+                registrar,
+                DEFAULT_MAX_AFFECTED_ROWS);
     }
 
     public AtDataSource(

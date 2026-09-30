@@ -22,8 +22,17 @@ class DeleteRecognizerTest {
     }
 
     @Test
-    void rejectsNonPrimaryKeyShapeBeforeMetadataAccess() throws Exception {
-        Delete delete = (Delete) CCJSqlParserUtil.parse("DELETE FROM account WHERE id IN (?,?)");
+    void recognizesPrimaryKeyInByDefault() throws Exception {
+        DeleteRecognizer.Plan plan =
+                recognizer.recognize(
+                        (Delete) CCJSqlParserUtil.parse("DELETE FROM account WHERE id IN (?,?)"),
+                        new MysqlAtSqlDialect());
+        assertEquals(2, plan.predicateParameterCount);
+    }
+
+    @Test
+    void rejectsRangePredicateBeforeMetadataAccess() throws Exception {
+        Delete delete = (Delete) CCJSqlParserUtil.parse("DELETE FROM account WHERE id>?");
         assertThrows(
                 UnsupportedAtSqlException.class,
                 () -> recognizer.recognize(delete, new MysqlAtSqlDialect()));

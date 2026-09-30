@@ -47,7 +47,7 @@ public class OrderService {
         // 1) 扣减付款方余额（本服务本地库）
         // AT 模式只接受「SET 列 = ?」的受限 SQL：不支持 balance-? 这类表达式，
         // 所以先读余额、在 Java 里算出新值，再整体写入（与 easy-at-example-local 写法一致）。
-        jdbc.update("UPDATE account SET balance=? WHERE id=?", balance - amount, userId);
+        jdbc.update("UPDATE account SET balance=balance - ? WHERE id=?", amount, userId);
 
         // 2) 记录订单（INSERT 必须显式携带主键 id，且所有值都必须是 ?）
         long orderId = System.currentTimeMillis();

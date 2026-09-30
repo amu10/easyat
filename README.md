@@ -30,7 +30,7 @@ AtDataSource 拦截 JDBC PreparedStatement
 
 ## SQL 支持范围
 
-首版以正确性优先，只自动处理以下形式的单行 DML：
+当前以正确性优先，自动处理以下按主键定位的 DML：
 
 ```sql
 INSERT INTO account (id, balance) VALUES (?, ?)
@@ -42,11 +42,11 @@ UPDATE account SET status='PAID' WHERE id=?
 DELETE FROM account WHERE id=?
 ```
 
-多行主键操作默认关闭，可通过 `easy-at.sql.max-affected-rows` 开放受限的
-`WHERE id IN (?,...)`。函数白名单、方言差异和 JDBC Batch 约束见
+多行主键操作默认支持最多 100 行，可通过 `easy-at.sql.max-affected-rows` 调整上限；
+当前仅支持可提前确定行集合的 `WHERE id IN (?,...)`。函数白名单、方言差异和 JDBC Batch 约束见
 [`SQL_COMPATIBILITY.md`](SQL_COMPATIBILITY.md)。
 
-表必须有单列主键（通过 JDBC 元数据识别，不依赖 `id` 命名），`UPDATE` 和 `DELETE` 的 `WHERE` 条件必须精确匹配主键。UPDATE 赋值支持参数、标量字面量，以及目标列自身参与的 `+`、`-`、`*`、`/`、`%` 算术组合；跨列计算、函数、多表 DML、批量更新、子查询、存储过程、DDL、无主键表仍会在业务 SQL 执行前抛出 `UnsupportedAtSqlException`。
+表必须有单列主键（通过 JDBC 元数据识别，不依赖 `id` 命名），`UPDATE` 和 `DELETE` 的 `WHERE` 条件必须是主键精确匹配或有上限的主键 `IN`。UPDATE 支持参数、标量字面量、函数白名单和同列算术组合；跨列计算、多表 DML、子查询、存储过程、DDL、无主键表仍会在业务 SQL 执行前抛出 `UnsupportedAtSqlException`。
 
 ## 跨服务 AT 协调
 

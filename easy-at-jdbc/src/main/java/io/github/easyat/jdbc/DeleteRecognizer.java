@@ -7,7 +7,7 @@ final class DeleteRecognizer implements AtSqlRecognizer<Delete, DeleteRecognizer
     private final int maxAffectedRows;
 
     DeleteRecognizer() {
-        this(1);
+        this(AtDataSource.DEFAULT_MAX_AFFECTED_ROWS);
     }
 
     DeleteRecognizer(int maxAffectedRows) {

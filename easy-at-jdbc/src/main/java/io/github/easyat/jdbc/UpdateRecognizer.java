@@ -11,7 +11,7 @@ final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer
     private final int maxAffectedRows;
 
     UpdateRecognizer() {
-        this(1);
+        this(AtDataSource.DEFAULT_MAX_AFFECTED_ROWS);
     }
 
     UpdateRecognizer(int maxAffectedRows) {

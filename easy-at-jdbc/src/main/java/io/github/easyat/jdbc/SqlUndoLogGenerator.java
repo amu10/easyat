@@ -16,11 +16,11 @@ import net.sf.jsqlparser.statement.insert.Insert;
 import net.sf.jsqlparser.statement.update.Update;
 
 /**
- * 用 JSqlParser 解析受限的单行 DML，并生成对应的 before/after image 与 undo SQL。
+ * 用 JSqlParser 解析受限的主键 DML，并生成对应的 before/after image 与 undo SQL。
  *
- * <p>这是 AT 模式「正确性」的核心。它刻意采用<b>保守策略</b>：只接受带主键精确条件的 单行 INSERT/UPDATE/DELETE。UPDATE
- * 支持直接赋值以及同列的加减运算；任何多表、批量、子查询、 函数表达式、别名表、无主键表都直接抛 {@link UnsupportedAtSqlException}，绝不允许生成「猜测性」的
- * undo log（DESIGN.md §7.5）。
+ * <p>这是 AT 模式「正确性」的核心。它刻意采用<b>保守策略</b>：接受主键精确条件和有上限的主键 IN。UPDATE
+ * 支持安全表达式与函数白名单；任何多表、子查询、别名表、无主键表都直接抛 {@link UnsupportedAtSqlException}，绝不允许生成「猜测性」的 undo
+ * log（DESIGN.md §7.5）。
  *
  * <p>三种 DML 的 undo 逻辑（对应 DESIGN.md §7）：
  *
@@ -90,7 +90,14 @@ final class SqlUndoLogGenerator {
             LocalTransactionBridge bridge,
             AtSqlDialect dialect,
             BranchRegistrar registrar) {
-        this(resourceId, manager, locks, bridge, dialect, registrar, 1);
+        this(
+                resourceId,
+                manager,
+                locks,
+                bridge,
+                dialect,
+                registrar,
+                AtDataSource.DEFAULT_MAX_AFFECTED_ROWS);
     }
 
     SqlUndoLogGenerator(
@@ -400,7 +407,7 @@ final class SqlUndoLogGenerator {
 
     private static UnsupportedAtSqlException unsupported(String sql) {
         return new UnsupportedAtSqlException(
-                "Unsupported AT SQL; only single-row INSERT/UPDATE/DELETE by primary key are allowed; UPDATE values may use parameters, scalar literals, or same-column arithmetic (+, -, *, /, %): "
+                "Unsupported AT SQL; only primary-key INSERT/UPDATE/DELETE and bounded primary-key IN updates/deletes are allowed: "
                         + sql);
     }
 

@@ -13,16 +13,17 @@
 
 ## AT 模式受限 SQL（重要，写业务代码前先读）
 
-undo 日志生成器（`SqlUndoLogGenerator`）采用**保守策略**：只接受「按主键、单行的 INSERT/UPDATE/DELETE」。
-UPDATE 支持直接参数赋值和同列加减。不符合的语句会在执行时抛 `UnsupportedAtSqlException`——这是刻意的设计
+undo 日志生成器采用**保守策略**：接受按主键的 INSERT/UPDATE/DELETE，以及默认最多 100 行的
+`WHERE 主键 IN (?,...)` UPDATE/DELETE。UPDATE 支持参数、标量字面量、函数白名单和同列算术。
+不符合的语句会在执行时抛 `UnsupportedAtSqlException`——这是刻意的设计
 （不为无法确定的 SQL 生成「猜测性」undo），不是 bug。
 
 | 语句 | 要求 |
 | --- | --- |
-| UPDATE | 支持 `SET 列=?`、`SET 列=同列+?`、`SET 列=同列-?`；`WHERE 主键=?`；WHERE 参数位于 SET 参数之后 |
-| DELETE | `WHERE 主键 = ?` |
+| UPDATE | 支持参数、标量字面量、函数白名单和同列算术；支持 `WHERE 主键=?` 或 `WHERE 主键 IN (?,...)` |
+| DELETE | 支持 `WHERE 主键=?` 或 `WHERE 主键 IN (?,...)` |
 | INSERT | 必须**显式写出主键列**，且所有值都是 `?`（undo 是按主键 DELETE） |
-| 共同 | 表必须有**单列主键**；不支持跨列计算、JOIN / 子查询 / 批量 / 多表 / 表别名 / 函数表达式 |
+| 共同 | 表必须有**单列主键**；JDBC Batch 可用；不支持跨列计算、JOIN / 子查询 / 多表 / 表别名 / 未列入白名单的函数 |
 
 ```java
 // ✅ 支持：目标列自身参与的算术组合
