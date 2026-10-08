@@ -63,13 +63,16 @@ public final class JdbcGlobalLockManager implements GlobalLockManager, AutoClose
                 renew(resource, table, key, xid);
                 return;
             }
+            String status = globalStatus(existing.xid);
+            if (status == null || isConverged(status)) {
+                // Terminal and orphaned transactions can no longer modify business data. Remove
+                // all of their locks immediately; waiting for lease expiry is both unnecessary
+                // and unsafe when another process still has the XID in its local renewal set.
+                releaseByXid(existing.xid);
+                continue;
+            }
             long now = System.currentTimeMillis();
             if (existing.leaseUntil < now) {
-                String status = globalStatus(existing.xid);
-                if (status == null || isConverged(status)) {
-                    deleteStale(resource, table, key, existing.xid, existing.leaseUntil);
-                    continue;
-                }
                 throw new GlobalLockConflictException(
                         "Lock on "
                                 + resource
@@ -197,19 +200,28 @@ public final class JdbcGlobalLockManager implements GlobalLockManager, AutoClose
         }
     }
 
-    private void renewAll() {
+    void renewAll() {
         if (closed.get() || held.isEmpty()) return;
         long now = System.currentTimeMillis();
         for (String xid : held) {
-            try (Connection c = dataSource.getConnection();
-                    PreparedStatement p =
-                            c.prepareStatement(
-                                    "UPDATE easy_at_lock SET lease_until=? WHERE xid=? AND lease_until<?")) {
-                p.setTimestamp(1, new Timestamp(now + leaseMillis));
-                p.setString(2, xid);
-                p.setTimestamp(3, new Timestamp(now + leaseMillis));
-                p.executeUpdate();
-            } catch (SQLException ignored) {
+            try {
+                String status = globalStatus(xid);
+                if (status == null || isConverged(status)) {
+                    releaseByXid(xid);
+                    continue;
+                }
+                try (Connection c = dataSource.getConnection();
+                        PreparedStatement p =
+                                c.prepareStatement(
+                                        "UPDATE easy_at_lock SET lease_until=? WHERE xid=? AND lease_until<?")) {
+                    p.setTimestamp(1, new Timestamp(now + leaseMillis));
+                    p.setString(2, xid);
+                    p.setTimestamp(3, new Timestamp(now + leaseMillis));
+                    p.executeUpdate();
+                }
+            } catch (RuntimeException | SQLException ignored) {
+                // A transient coordination-database failure must not terminate the scheduled
+                // executor permanently. The next renewal cycle retries.
             }
         }
     }

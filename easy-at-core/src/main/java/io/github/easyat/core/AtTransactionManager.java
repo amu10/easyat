@@ -118,7 +118,12 @@ public final class AtTransactionManager {
      */
     public void rollback(String xid, boolean releaseLockOnConverge) {
         AtTransaction tx = required(xid);
-        if (tx.getStatus() == AtStatus.ROLLED_BACK) return;
+        if (tx.getStatus() == AtStatus.ROLLED_BACK) {
+            // Rollback is idempotent, but lock cleanup must be retried. The previous process may
+            // have persisted the terminal state and failed before deleting its locks.
+            if (releaseLockOnConverge) release(xid);
+            return;
+        }
         if (tx.getStatus() != AtStatus.ROLLING_BACK && !transition(tx, AtStatus.ROLLING_BACK))
             throw new AtException("Conflict rolling back " + xid + " from " + tx.getStatus());
         List<UndoRecord> records = new ArrayList<UndoRecord>(tx.getUndoRecords());
