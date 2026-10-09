@@ -27,10 +27,26 @@
 - 管理端点前缀 `/_easy-at/v1`，UI 在 `/_easy-at/v1/ui`（token 走 `X-EasyAt-Token` header）。
 - 传输头统一走 `AtTransportHeaders`（XID/DEADLINE/SOURCE/SIGNATURE），不要手写字符串。
 
-## AT 模式受限 SQL（写业务/示例代码必读）
+## AT 模式 SQL 支持（写业务/示例代码必读，2026-10-09 改）
 
-- `SqlUndoLogGenerator` 刻意保守：只接受「按主键、单行的 INSERT/UPDATE/DELETE，且值必须是 `?`」，
-  其余一律抛 `UnsupportedAtSqlException`（不为不确定的 SQL 生成猜测性 undo）。**这是设计，不是 bug**。
+两条路径：
+1. **严格主键路径**：`WHERE 主键=?` / `主键 IN (?,...)`，靠参数定位行，零额外查询。
+2. **通用快照路径**（`GenericSnapshotPlanner` + `GenericAtExecutor`）：其余语句把原语句的
+   `FROM/WHERE/ORDER BY/LIMIT` 拼成 `SELECT <alias>.* FROM ... WHERE <原 where>` 先读出受影响行，
+   再逐行建 undo + 逐行加锁。子查询/EXISTS/JOIN/任意谓词/跨列 SET/别名/多行 INSERT 都走这条。
+   严格路径抛 `UnsupportedAtSqlException` 才回退；两条都失败时合并报错原因。
+
+仍拒绝（正确性边界，不是保守）：多目标表 DML、`SET pk=?`、无主键/复合主键表、`INSERT ... SELECT`、
+依赖自增主键却不写主键列、DDL/TRUNCATE/MERGE/存储过程。
+
+关键实现约束：
+- 计数参数**必须用 `net.sf.jsqlparser.util.deparser.ExpressionDeParser`**（配 `SelectDeParser`）；
+  `ExpressionVisitorAdapter` 不下钻 SubSelect，会把子查询里的 `?` 漏掉导致绑定错位。
+- `UPDATE a, b SET ...` 的第二个表在 `startJoins` 且渲染不带 JOIN 关键字，拼 FROM 要补逗号。
+- `Insert.getValues()` 遇 `INSERT...SELECT` 抛 CCE，先判 `getSelect() instanceof Values`。
+- `Table.getAlias()` 返回 `Alias` 对象，不是 String。
+- 要触发回退，识别器必须抛 `UnsupportedAtSqlException`；抛 `AtException` 会直接打断业务
+  （`RecognizerSupport#tableName` 的别名分支、`assertPrimaryKey` 都已改）。
 - UPDATE：`SET 列 = ?`——**不接受** `SET balance=balance-?`（表达式）与 `SET status='PAID'`（字面量）；
   `WHERE 主键 = ?`，且 WHERE 的 `?` 必须是最后一个参数（生成器按 `columns.size()+1` 取 key）。
 - DELETE：`WHERE 主键 = ?`。INSERT：必须显式写出主键列且值全为 `?`（undo 是按主键 DELETE）。
