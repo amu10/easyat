@@ -600,11 +600,15 @@ SELECT account.* FROM account WHERE id IN (SELECT aid FROM frozen WHERE status =
 - 分库分表（ShardingSphere 等代理数据源）、读写分离多数据源、DDL、`TRUNCATE`、`MERGE`、存储过程均未支持也未验证。
 - 一行一锁：热点行的并发写会被全局锁串行化，`GlobalLockConflictException` 随热点上升——这是 AT 的固有代价，不是本实现的 bug。
 
-### 18.4 Redis 存储的完整风险评估（2026-10-09 追加）
+### 18.4 Redis 存储的完整风险评估（2026-10-09）
+
+> **2026-10-09 21:00 收口**：问题二（无回收）与问题三（内存增长）已实现修复：新增 `RedisCleanup`
+> （zset 索引 + 批量删除）与兜底 TTL；并新增 `storage.type=hybrid` 混合存储，把 undo 移回业务库
+> 从而彻底解决问题一。详见 [§19](#19-2026-10-09-混合存储hybrid与-redis-回收)。
 
 用户问："存储改成 Redis、undo 也存 Redis，会不会出现存储过多不回收？"
 
-**会。而且"不回收"只是三个问题里最轻的一个。**
+**会。而且"不回收"只是三个问题里最轻的一个。**（以下为修复前的事实记录）
 
 #### 问题一（最严重）：undo 不再与业务 DML 原子提交
 
@@ -657,12 +661,77 @@ Redis 是内存库，几天就会撞 `maxmemory`。而一旦配了 `allkeys-lru`
 
 另外 `save(tx)` 是**全量重写**该事务所有 undo（每条 DML 触发一次），N 条 DML ≈ O(N²) 次 HSET + 网络往返。
 
-#### 结论与建议
+#### 结论（已按此实现）
 
-- **生产选 JDBC 存储**（`easy-at.storage.type=jdbc`）。undo log 本来就必须和业务 DML 同连接、同事务提交，
-  放在业务库里是唯一能保证这一点的地方——这不是惯例，是 AT 正确性的前提。
-- Redis 存储只适合：功能验证、演示、或者把 `maxmemory_policy` 设成 `noeviction` 且明确接受"内存有限"的场景。
-- 如果确实要继续用 Redis 存储，至少要补三件事（**工作量不小，且补完仍不解决问题一**）：
-  1. `RedisAtRepository` 实现清理：用 zset 按 `created_at` 给终态事务排索引，批量删 `global` / `undo:*` / `branch:*`；
-  2. 给 undo hash 设 TTL，并由活跃事务**续期**（否则 TTL 到期会让未收敛事务失去回滚能力）；
-  3. 与 §2.3 对齐：要么让 Redis 路径也在业务提交后再确认 undo 已持久化，要么显式标注该组合不支持。
+- **生产推荐 `hybrid`**：undo 在业务库（保证与业务 DML 原子提交），全局状态/分支/锁在 Redis。
+- 纯 `redis` 存储定位为验证/演示用途；若一定要上，必须配好 `easy-at.cleanup.enabled=true`
+  与合理的 `redis.ttl`，并把 `maxmemory-policy` 设为 `noeviction`。
+- 实现见 §19；回归：`HybridUndoStorageTest` 5 例（H2，含反向验证）+
+  `RedisCleanupIT` 3 例（真实 Redis）。
+
+## 19. 2026-10-09 混合存储（hybrid）与 Redis 回收
+
+用户要求支持两件事：① undo 走业务库、其余走 Redis 的**混合方案**；② **单独 Redis 存储**也要能长期运行。
+两项都已落地，`mvn -o clean verify` 全绿。
+
+### 19.1 混合存储：把 undo 存储从 AtRepository 里拆出来
+
+核心是新增一层 SPI，让 undo 的落点可以独立选择：
+
+| 组件 | 作用 |
+|---|---|
+| `core.UndoRepository` | `load(xid)` / `replaceAll(xid, records)` / `deleteByXid(xid)` |
+| `core.ConnectionBoundUndoRepository` | 额外提供 `append(Connection, …)` / `updateUndo` / `removeUndo`——**走业务连接**是关键 |
+| `jdbc.JdbcUndoRepository` | 只依赖 `easy_at_undo_log` 一张表，混合模式专用（业务库不需要 `easy_at_global`） |
+| `core.CleanupScheduler` | 与存储无关的清理调度；被删的 xid 交给 `Consumer` 做级联（正好用来删业务库 undo） |
+| `AtTransactionManager` | 新增 7 参构造器（旧签名全部委托过来，二进制兼容）；`persist(tx)` 统一出口 |
+
+几条必须说清的取舍：
+
+- **为什么不能给 `RedisAtRepository` 也实现 `ConnectionBoundUndoRepository`**：Redis 连接不是 JDBC
+  业务连接，它无法参与业务本地事务的提交/回滚——做不了"原子"，所以干脆不给它这个能力，由 `storage.type`
+  显式区分，避免使用者误以为两者等价。
+- **`persist(tx)` 在混合模式下不等于一个事务**：undo 写业务库、重试簿记写 Redis。簿记字段（retry_count /
+  next_retry_at）本来就允许最终一致；真正要求与业务原子的是 undo 本身，它仍在业务连接里。
+- **`required(xid)` 要拼装**：全局状态从 Redis 读、undo 从业务库读，两侧合起来才是完整事务快照。
+  只在**显式注入** `UndoRepository` 时才合并，避免单存储模式重复加载。
+
+### 19.2 Redis 单独存储：补上回收
+
+| 改动 | 说明 |
+|---|---|
+| `RedisCleanup` | 新增 `easy-at:cleanup:index`（zset，member=xid、score=updated_at）按时间捞候选；一次 Lua 删掉 global hash、undo 索引**与它引用的所有 undo 实体**、分支实体与 `branch:uniq:`、状态集合成员、残留锁，最后 `ZREM` |
+| 未到期候选 | 打上当前时间戳的 score 排到队尾：避免占满批次导致清理停滞，长期静止后又自然老化回队首重新参与扫描 |
+| 兜底 TTL | `RedisAtRepository` 在每次 `create` / `transition` / `save` / `updateRecovery` 时刷新 `EXPIRE`（`easy-at.redis.ttl`，默认 30 天）。活跃事务永不到期，只有清理器也挂了的孤儿键才最终回收 |
+| 孤儿键修复 | `CLEAR_UNDO_LUA` 原先只 DEL **索引集合**，实体 hash 从此再无人引用。现在会先 `SMEMBERS` 再逐个 DEL 实体 |
+| `CleanupScheduler` 级联 | 混合模式下清理 Redis 后拿 `removedXids` 调 `UndoRepository#deleteByXid`，两边各清一半才是一次完整回收 |
+
+### 19.3 配置与运维
+
+```yaml
+easy-at:
+  storage:
+    type: hybrid      # jdbc / redis / hybrid / file
+  lock:
+    type: redis
+  cleanup:
+    enabled: true
+    committed-retention: 7d
+    rolled-back-retention: 30d
+  redis:
+    ttl: 30d          # 兜底 TTL
+```
+
+- 业务库只需 `db/{mysql,postgresql}/undo-only.sql`（只要 undo 表）。
+- 纯 Redis 模式下 `easy-at.cleanup.enabled=true` **必须开**——否则等于回到键只增不减的旧状态。
+- 运维侧（`RUNBOOK.md` §5）增加两件事：① 看 `easy_at_undo_log` 与 Redis `easy-at:cleanup:index` 的
+  规模；② 纯 Redis 模式用 `redis-cli --scan --pattern 'easy-at:*'` 抽查是否有长期未回收的孤儿键。
+
+### 19.4 已知限制
+
+- 混合模式目前按**单个业务 DataSource** 装配 `JdbcUndoRepository`；多数据源场景需要为每个资源各配一个
+  undo 存储，尚未实现（会先走主数据源）。
+- `storage.type=redis` 的原子性问题（§18.4 问题一）**没有也不会被修复**——那是存储选型的固有属性，
+  只能靠 `hybrid` 绕开。
+- Redis 清理只在**终态**事务上生效；`MANUAL_INTERVENTION` / `DIRTY_WRITE` 会一直保留并持续出现在
+  清理扫描里，这正是想要的行为（等人工处理）。

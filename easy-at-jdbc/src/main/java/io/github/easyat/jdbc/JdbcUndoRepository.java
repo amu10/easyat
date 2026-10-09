@@ -6,7 +6,6 @@ import io.github.easyat.core.RowImage;
 import io.github.easyat.core.UndoContext;
 import io.github.easyat.core.UndoDataCodec;
 import io.github.easyat.core.UndoRecord;
-import io.github.easyat.core.UndoRepository;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -17,18 +16,16 @@ import java.util.List;
 import javax.sql.DataSource;
 
 /**
- * 只负责 {@code easy_at_undo_log} 一张表的 undo 存储，用于<b>混合存储模式</b>
- * （全局事务状态/分支/锁在 Redis，undo 在业务库）。
+ * 只负责 {@code easy_at_undo_log} 一张表的 undo 存储，用于<b>混合存储模式</b> （全局事务状态/分支/锁在 Redis，undo 在业务库）。
  *
  * <h2>为什么要有这个独立实现</h2>
  *
- * <p>undo log 必须与业务 DML 在<b>同一个本地事务</b>里提交——业务回滚时 undo 必须一起消失，
- * 否则恢复调度会去回滚一行从未真正改动过的数据。这是 AT 正确性的前提，不是惯例。
+ * <p>undo log 必须与业务 DML 在<b>同一个本地事务</b>里提交——业务回滚时 undo 必须一起消失， 否则恢复调度会去回滚一行从未真正改动过的数据。这是 AT
+ * 正确性的前提，不是惯例。
  *
- * <p>因此混合模式下 undo 只能落在业务库（通过 {@link #append(Connection, UndoRecord)} 走业务连接），
- * 而不能跟着 Redis 走。本类与 {@link JdbcAtRepository} 的区别是：它<b>不依赖</b>
- * {@code easy_at_global} / {@code easy_at_branch} / {@code easy_at_lock} 三张表，
- * 所以混合模式下业务库不需要建那三张表。
+ * <p>因此混合模式下 undo 只能落在业务库（通过 {@link #append(Connection, UndoRecord)} 走业务连接）， 而不能跟着 Redis 走。本类与
+ * {@link JdbcAtRepository} 的区别是：它<b>不依赖</b> {@code easy_at_global} / {@code easy_at_branch} /
+ * {@code easy_at_lock} 三张表， 所以混合模式下业务库不需要建那三张表。
  */
 public final class JdbcUndoRepository implements ConnectionBoundUndoRepository {
     private final DataSource dataSource;

@@ -174,6 +174,22 @@ Redis 存储：`redis-cli --scan --pattern 'easy-at:lock:byXid:<xid>'` 对应的
 - [ ] 日志里没有 `UnsupportedAtSqlException`（说明有业务 SQL 不在支持范围内，会被直接拒绝）
 - [ ] 没有 `GlobalLockConflictException` 突增（说明热点行冲突加剧）
 
+### 5.1 混合存储（hybrid）额外检查
+
+| 对象 | 怎么看 | 异常信号 |
+|---|---|---|
+| 业务库 `easy_at_undo_log` | `SELECT COUNT(*) FROM easy_at_undo_log WHERE created_at < NOW() - INTERVAL 7 DAY` | 行数不降 ⇒ Redis 侧清理没跑或级联没生效 |
+| Redis `easy-at:cleanup:index` | `redis-cli zcard easy-at:cleanup:index` | 只增不减 ⇒ `cleanup.enabled` 没开，或终态事务过不了保留期 |
+| Redis 孤儿键 | `redis-cli --scan --pattern 'easy-at:undo:*' \| wc -l` | 远大于在途事务数 ⇒ 清理被跳过，查 `easy-at-cleanup` 线程日志 |
+
+### 5.2 纯 Redis 存储（`storage.type: redis`）
+
+- `maxmemory-policy` 必须是 `noeviction`；否则内存满时 Redis 会**随机淘汰未收敛事务的 undo**，
+  表现为：事务卡在非终态、回滚时报找不到 undo。
+- 每天 `redis-cli info memory` 看 `used_memory` 趋势；配合 §5.1 的 zset 计数确认回收在跑。
+- 该模式下 undo **不与业务本地事务原子提交**（`PRODUCTION_GAPS.md` §18.4 问题一），
+  业务回滚后 undo 仍会留下；如需强一致请切到 `hybrid`。
+
 ---
 
 ## 6. 回滚预案

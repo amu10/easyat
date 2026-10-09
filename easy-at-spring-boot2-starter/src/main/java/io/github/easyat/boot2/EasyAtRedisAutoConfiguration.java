@@ -67,8 +67,8 @@ public class EasyAtRedisAutoConfiguration {
     }
 
     /**
-     * Redis 侧的清理调度。混合存储模式下被删掉的 xid 会通过 {@code UndoRepository#deleteByXid}
-     * 级联清理业务库的 {@code easy_at_undo_log}，两边合起来才是一次完整回收。
+     * Redis 侧的清理调度。混合存储模式下被删掉的 xid 会通过 {@code UndoRepository#deleteByXid} 级联清理业务库的 {@code
+     * easy_at_undo_log}，两边合起来才是一次完整回收。
      */
     @Bean(destroyMethod = "close")
     @ConditionalOnMissingBean(CleanupScheduler.class)

@@ -89,10 +89,13 @@ easy-at:
   application-name: order-service      # 应用名，用于 header、分支归属、诊断
   production: false                    # true=生产模式：强制本地事务 + 强制 HMAC 密钥
 
-  # ---- 事务存储：file / jdbc / redis ----
+  # ---- 事务存储：file / jdbc / redis / hybrid ----
   storage:
-    type: file                         # 默认 file；生产用 jdbc 或 redis
+    type: file                         # 默认 file；生产用 jdbc 或 hybrid
     file-dir: ./data/easy-at
+    # hybrid = undo 走业务库（与业务 DML 同事务），global/branch/lock 走 Redis。
+    #          业务库只需 db/{mysql,postgresql}/undo-only.sql 里的那一张 undo 表。
+    # redis  = 全部进 Redis。注意 undo 因此不再与业务本地事务原子提交，只建议验证/演示。
 
   # ---- Redis 连接：storage 或 lock 任一使用 redis 时生效 ----
   redis:
@@ -100,6 +103,7 @@ easy-at:
     port: 6379
     password: ""
     database: 0
+    ttl: 30d                           # 兜底 TTL：键在每次写入时刷新，活跃事务永不到期
 
   # ---- 全局行锁：file / jdbc / redis ----
   lock:
@@ -124,14 +128,21 @@ easy-at:
     lease: 30s
     max-retries: 20
 
-  # ---- JDBC 历史渐进清理（默认关闭） ----
+  # ---- Redis 连接（storage.type/lock.type 任一为 redis/hybrid 时使用） ----
+  redis:
+    host: localhost
+    port: 6379
+    database: 0
+    ttl: 30d                           # 兜底 TTL：每次写入都刷新，活跃事务永不到期
+
+  # ---- 历史渐进清理（默认关闭；用 Redis/hybrid 时必须开） ----
   cleanup:
     enabled: false
     interval: 1m
     batch-size: 500
     committed-retention: 7d
     rolled-back-retention: 30d
-    expired-lock-retention: 10m
+    expired-lock-retention: 10m          # 仅 jdbc/hybrid 的 JDBC 锁生效
 
   # ---- 管理 API ----
   management:

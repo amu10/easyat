@@ -12,9 +12,8 @@ import java.util.function.Consumer;
 /**
  * 与存储无关的清理调度器。
  *
- * <p>既有的 {@code AtCleanupScheduler} 把清理器硬绑成 JDBC，导致 Redis / 混合存储根本没有回收手段。
- * 这里抽出一层：清理动作抽象成 {@link Task}，被删掉的 xid 交给 {@code Consumer} 做级联处理——
- * 混合存储模式下正好用它去删业务库里的 {@code easy_at_undo_log}。
+ * <p>既有的 {@code AtCleanupScheduler} 把清理器硬绑成 JDBC，导致 Redis / 混合存储根本没有回收手段。 这里抽出一层：清理动作抽象成 {@link
+ * Task}，被删掉的 xid 交给 {@code Consumer} 做级联处理—— 混合存储模式下正好用它去删业务库里的 {@code easy_at_undo_log}。
  */
 public final class CleanupScheduler implements AutoCloseable {
 

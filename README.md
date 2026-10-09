@@ -151,6 +151,60 @@ easy-at:
 
 `storage.type` 只决定 `AtRepository` 和 `BranchRepository`，`lock.type` 只决定 `GlobalLockManager`；任一项选择 Redis 时，Starter 都会创建并复用同一个 `JedisPool`。
 
+## 混合存储：undo 在业务库，状态在 Redis
+
+```yaml
+easy-at:
+  storage:
+    type: hybrid        # undo → 业务库；global/branch → Redis
+  lock:
+    type: redis
+  cleanup:
+    enabled: true
+    committed-retention: 7d
+    rolled-back-retention: 30d
+  redis:
+    host: localhost
+    port: 6379
+    ttl: 30d            # 兜底 TTL，每次写入都会刷新
+```
+
+业务库只需要一张 undo 表：`easy-at-jdbc/src/main/resources/db/{mysql,postgresql}/undo-only.sql`
+（**不要**把 `easy-at.sql` 整套建到业务库，多余的表会造成误导）。
+
+### 为什么 undo 必须留在业务库
+
+undo log 必须与业务 DML 在**同一个本地事务**里提交——业务回滚时 undo 要跟着一起消失，
+否则恢复调度会拿着一条 undo 去回滚一行从未真正改动过的数据。`JdbcUndoRepository` 通过
+`ConnectionBoundUndoRepository#append(Connection, UndoRecord)` 走业务连接，因此与业务 DML 同生共死。
+
+三种组合的差异：
+
+| `storage.type` | undo 落在哪 | 与业务事务原子 | 适用 |
+|---|---|---|---|
+| `jdbc` | 业务库 | ✅ | 单库/同服务的默认选择 |
+| `hybrid` | 业务库 | ✅ | 想要把协调状态放进 Redis（低延迟扫描）但又要保证一致性 |
+| `redis` | Redis | ❌ | 仅验证/演示，见下 |
+
+清理是两边各清一半：`RedisCleanup` 删 Redis 侧的 global/branch/undo，
+再通过 `CleanupScheduler` 的级联钩子调用 `UndoRepository#deleteByXid` 删业务库的 `easy_at_undo_log`。
+
+## Redis 历史清理
+
+纯 Redis 存储（`storage.type: redis`）此前**没有任何回收手段**——键只增不减，也没有 TTL。现在补了两道防线：
+
+1. **主动清理**：`RedisCleanup` 通过 `easy-at:cleanup:index` 这个 zset（member=xid、score=最后更新时间）
+   批量捞出过期的终态事务，删除它的 global hash、undo 索引与实体、分支记录、状态集合成员和残留锁。
+   `cleanup.enabled=true` 时由 Starter 挂到定时调度上。
+2. **兜底 TTL**：所有键在**每次被写入时**刷新一次 EXPIRE（`redis.ttl`，默认 30 天）。
+   活跃事务永远被刷新、永不到期；只有彻底无人处理且清理器也挂了的孤儿键才由 Redis 回收。
+
+未满足删除条件的候选会被重新打上当前时间戳的 score 排到队尾——它们长期静止后会自然老化回队首重新参与扫描，
+既不会占满批次导致清理停滞，也不会永久漏掉事务（例如等待人工介入的那一批）。
+
+> 仍然要强调：`storage.type: redis` 下 undo **不与业务本地事务原子提交**（写在 Redis 里，
+> 业务回滚它还在）。生产请使用 `jdbc` 或 `hybrid`。
+
 ## 运维：管理 API 与指标
 
 管理端点（`easy-at.management.enabled=true` 时暴露，需 `easy-at.management.token` 鉴权）：

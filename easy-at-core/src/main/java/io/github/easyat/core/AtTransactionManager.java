@@ -89,8 +89,8 @@ public final class AtTransactionManager {
     }
 
     /**
-     * undo 到底写哪里：显式注入优先，否则若 {@code AtRepository} 自己也实现了 {@link UndoRepository}
-     * （{@code JdbcAtRepository} 就是这种），则直接用它——这样单存储模式不需要额外装配。
+     * undo 到底写哪里：显式注入优先，否则若 {@code AtRepository} 自己也实现了 {@link UndoRepository} （{@code
+     * JdbcAtRepository} 就是这种），则直接用它——这样单存储模式不需要额外装配。
      */
     private UndoRepository undoStore() {
         if (undoRepository != null) return undoRepository;
@@ -101,9 +101,8 @@ public final class AtTransactionManager {
     /**
      * undo + 重试簿记的持久化出口。
      *
-     * <p>单一存储时原样 {@code repository.save}（一个本地事务里写完 undo 与簿记）；混合存储时 undo
-     * 写业务库、簿记写 Redis——两者不在同一个事务里，但簿记字段（重试次数/下次重试时间）本来就允许最终一致，
-     * 真正要求与业务原子的是 undo 本身。
+     * <p>单一存储时原样 {@code repository.save}（一个本地事务里写完 undo 与簿记）；混合存储时 undo 写业务库、簿记写
+     * Redis——两者不在同一个事务里，但簿记字段（重试次数/下次重试时间）本来就允许最终一致， 真正要求与业务原子的是 undo 本身。
      */
     private void persist(AtTransaction tx) {
         UndoRepository store = undoStore();
@@ -190,8 +189,7 @@ public final class AtTransactionManager {
     public void updateUndo(Connection connection, String xid, String undoId, RowImage after) {
         UndoRepository store = undoStore();
         if (store instanceof ConnectionBoundUndoRepository) {
-            ((ConnectionBoundUndoRepository) store)
-                    .updateUndo(connection, xid, undoId, after);
+            ((ConnectionBoundUndoRepository) store).updateUndo(connection, xid, undoId, after);
             return;
         }
         updateUndo(xid, undoId, after);
@@ -200,8 +198,7 @@ public final class AtTransactionManager {
     public void discardUndo(Connection connection, String xid, String undoId) {
         UndoRepository store = undoStore();
         if (store instanceof ConnectionBoundUndoRepository) {
-            ((ConnectionBoundUndoRepository) store)
-                    .removeUndo(connection, xid, undoId);
+            ((ConnectionBoundUndoRepository) store).removeUndo(connection, xid, undoId);
             return;
         }
         AtTransaction tx = required(xid);

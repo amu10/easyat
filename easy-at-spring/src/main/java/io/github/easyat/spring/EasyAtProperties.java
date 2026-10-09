@@ -193,8 +193,7 @@ public class EasyAtProperties {
         /**
          * Redis 键的兜底 TTL：每次写入都会刷新，因此活跃事务永不到期。
          *
-         * <p>它只是最后一道防线——正常情况下 {@code RedisCleanup} 会先按保留期把终态事务删掉。
-         * 没有它时，一旦清理器停摆，那些键会永久留在 Redis 里。
+         * <p>它只是最后一道防线——正常情况下 {@code RedisCleanup} 会先按保留期把终态事务删掉。 没有它时，一旦清理器停摆，那些键会永久留在 Redis 里。
          */
         public Duration getTtl() {
             return ttl;

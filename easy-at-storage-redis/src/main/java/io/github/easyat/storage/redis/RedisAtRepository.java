@@ -36,10 +36,10 @@ public final class RedisAtRepository implements AtRepository {
     private final String prefix;
 
     /**
-     * 兜底 TTL（秒）。每个键在每次被写入时刷新一次，因此"有人在推进的事务"永远不会过期；
-     * 只有彻底没人管、且清理器也挂掉的孤儿键才会最终被 Redis 回收。0 表示不设 TTL。
+     * 兜底 TTL（秒）。每个键在每次被写入时刷新一次，因此"有人在推进的事务"永远不会过期； 只有彻底没人管、且清理器也挂掉的孤儿键才会最终被 Redis 回收。0 表示不设 TTL。
      */
     private final long ttlSeconds;
+
     private final RedisCleanup cleanup;
 
     public RedisAtRepository(JedisPool pool) {
@@ -106,8 +106,7 @@ public final class RedisAtRepository implements AtRepository {
     /**
      * 清空该事务的 undo：索引集合<b>和它引用的所有 undo 实体</b>都要删。
      *
-     * <p>旧实现只 DEL 索引集合，实体 hash 从此再无人引用——既占内存，又连扫描都扫不到。
-     * save() 是整体重写，所以这里必须连实体一起删干净。
+     * <p>旧实现只 DEL 索引集合，实体 hash 从此再无人引用——既占内存，又连扫描都扫不到。 save() 是整体重写，所以这里必须连实体一起删干净。
      */
     private static final String CLEAR_UNDO_LUA =
             "local set=KEYS[1]; local pfx=ARGV[1]; local xid=ARGV[2];"
@@ -160,7 +159,9 @@ public final class RedisAtRepository implements AtRepository {
             eval(
                     j,
                     CREATE_LUA,
-                    new String[] {gkey(tx.getXid()), statusSet(tx.getStatus().name()), cleanupIndex()},
+                    new String[] {
+                        gkey(tx.getXid()), statusSet(tx.getStatus().name()), cleanupIndex()
+                    },
                     new String[] {
                         tx.getName(),
                         tx.getStatus().name(),
@@ -280,7 +281,10 @@ public final class RedisAtRepository implements AtRepository {
                             j,
                             TRANSITION_LUA,
                             new String[] {
-                                gkey(xid), statusSet(expected.name()), statusSet(next.name()), cleanupIndex()
+                                gkey(xid),
+                                statusSet(expected.name()),
+                                statusSet(next.name()),
+                                cleanupIndex()
                             },
                             new String[] {
                                 xid,

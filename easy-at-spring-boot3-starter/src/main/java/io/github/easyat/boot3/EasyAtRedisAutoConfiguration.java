@@ -69,8 +69,8 @@ public class EasyAtRedisAutoConfiguration {
     /**
      * Redis 侧的清理调度。
      *
-     * <p>混合存储模式下被删掉的 xid 会通过 {@code UndoRepository#deleteByXid} 级联清理业务库里的
-     * {@code easy_at_undo_log}——两边各清一半，合起来才是一次完整回收。
+     * <p>混合存储模式下被删掉的 xid 会通过 {@code UndoRepository#deleteByXid} 级联清理业务库里的 {@code
+     * easy_at_undo_log}——两边各清一半，合起来才是一次完整回收。
      *
      * <p>纯 Redis 模式没有 {@code UndoRepository}，级联为空，undo 由 {@code RedisCleanup} 自己删。
      */
