@@ -6,6 +6,9 @@ import java.lang.reflect.Method;
 import org.aspectj.lang.*;
 import org.aspectj.lang.annotation.*;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.core.annotation.Order;
 
 /**
@@ -19,6 +22,8 @@ import org.springframework.core.annotation.Order;
 @Aspect
 @Order(100)
 public final class EasyAtAspect {
+    private static final Logger log = LoggerFactory.getLogger(EasyAtAspect.class);
+
     /** 全局事务管理器，负责 begin/commit/rollback 与本地 undo 推进。 */
     private final AtTransactionManager manager;
 
@@ -28,14 +33,31 @@ public final class EasyAtAspect {
     /** 指标采集器（可为 null）。 */
     private final EasyAtMetrics metrics;
 
+    private final AtGrayDecider grayDecider;
+    private final AtGrayKeyResolver grayKeyResolver;
+    private final String applicationName;
+
     public EasyAtAspect(AtTransactionManager m) {
-        this(m, null, null);
+        this(m, null, null, null, null);
     }
 
     public EasyAtAspect(AtTransactionManager m, BranchCoordinator c, EasyAtMetrics metrics) {
+        this(m, c, metrics, null, null);
+    }
+
+    public EasyAtAspect(
+            AtTransactionManager m,
+            BranchCoordinator c,
+            EasyAtMetrics metrics,
+            AtGrayDecider grayDecider,
+            EasyAtProperties properties) {
         manager = m;
         coordinator = c;
         this.metrics = metrics;
+        this.grayDecider = grayDecider;
+        this.grayKeyResolver = new AtGrayKeyResolver();
+        this.applicationName =
+                properties == null ? "unknown-service" : properties.getApplicationName();
     }
 
     @Around("@annotation(io.github.easyat.annotation.EasyAtTransactional)")
@@ -44,6 +66,16 @@ public final class EasyAtAspect {
         if (AtContext.active()) return p.proceed();
         Method m = ((MethodSignature) p.getSignature()).getMethod();
         EasyAtTransactional a = m.getAnnotation(EasyAtTransactional.class);
+        AtGrayDecision gray = decideGray(p, m, a);
+        if (metrics != null) metrics.recordGrayDecision(a.grayScene(), gray);
+        putGrayMdc(a.grayScene(), gray);
+        if (!gray.isEnabled()) {
+            try {
+                return p.proceed();
+            } finally {
+                clearGrayMdc();
+            }
+        }
         String name =
                 a.name().isEmpty()
                         ? m.getDeclaringClass().getSimpleName() + "." + m.getName()
@@ -73,6 +105,44 @@ public final class EasyAtAspect {
             throw e;
         } finally {
             AtContext.clear();
+            clearGrayMdc();
         }
+    }
+
+    private AtGrayDecision decideGray(
+            ProceedingJoinPoint point, Method method, EasyAtTransactional annotation) {
+        if (annotation.grayScene().trim().isEmpty() || grayDecider == null)
+            return AtGrayDecision.enabled("LEGACY_FULL", -1);
+        try {
+            String key = grayKeyResolver.resolve(point, annotation.grayKey());
+            return grayDecider.decide(
+                    new AtGrayRequest(
+                            annotation.grayScene(),
+                            key,
+                            applicationName,
+                            method.getDeclaringClass().getName() + "." + method.getName()));
+        } catch (RuntimeException failure) {
+            // 灰度基础设施异常时不创建新的分布式事务；普通本地事务仍可继续。
+            log.warn(
+                    "easyAt gray decision failed for scene={}, new AT transaction disabled",
+                    annotation.grayScene(),
+                    failure);
+            return AtGrayDecision.disabled("DECISION_FAILURE", -1);
+        }
+    }
+
+    private static void putGrayMdc(String scene, AtGrayDecision decision) {
+        MDC.put("atGrayScene", scene == null || scene.isEmpty() ? "legacy" : scene);
+        MDC.put("atGrayEnabled", String.valueOf(decision.isEnabled()));
+        MDC.put("atGrayReason", decision.getReason());
+        if (decision.getBucket() >= 0)
+            MDC.put("atGrayBucket", String.valueOf(decision.getBucket()));
+    }
+
+    private static void clearGrayMdc() {
+        MDC.remove("atGrayScene");
+        MDC.remove("atGrayEnabled");
+        MDC.remove("atGrayReason");
+        MDC.remove("atGrayBucket");
     }
 }

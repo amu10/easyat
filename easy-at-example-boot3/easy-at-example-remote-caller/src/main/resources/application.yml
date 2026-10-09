@@ -38,6 +38,16 @@ server:
 easy-at:
   application-name: order-service
   production: false
+  # 灰度只决定是否创建新的根 XID。已有 XID、undo、恢复和回滚不受此开关影响。
+  gray:
+    mode: GRAY                    # OFF / GRAY / FULL
+    default-percentage: 0
+    rules:
+      order-place:
+        percentage: 10
+        salt: order-place-v1
+        whitelist: ["1"]
+        blacklist: []
   storage:
     type: jdbc
   lock:

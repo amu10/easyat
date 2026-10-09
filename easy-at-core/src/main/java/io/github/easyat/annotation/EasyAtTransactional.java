@@ -18,4 +18,16 @@ public @interface EasyAtTransactional {
 
     /** 全局事务超时时间（毫秒）。超过该时长未提交且未被恢复调度接管的事务将被判定为超时回滚。默认 30000 毫秒（30 秒）。 */
     long timeout() default 30000L;
+
+    /**
+     * 灰度场景名。为空时保持历史行为：始终开启 AT；非空时由 Spring 集成层的灰度决策器决定是否创建根 XID。
+     * 已经携带 XID 的下游调用不会再次执行灰度判断。
+     */
+    String grayScene() default "";
+
+    /**
+     * 灰度主体的 SpEL 表达式，例如 {@code #p0}、{@code #request.userId}。
+     * 只用于稳定分桶和黑白名单匹配，不会写入事务日志。
+     */
+    String grayKey() default "";
 }

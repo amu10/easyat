@@ -89,6 +89,19 @@ easy-at:
   application-name: order-service      # 应用名，用于 header、分支归属、诊断
   production: false                    # true=生产模式：强制本地事务 + 强制 HMAC 密钥
 
+  # ---- 根 AT 事务灰度 ----
+  # OFF 只停止创建新 XID；已有 XID、undo、恢复和回滚始终继续。
+  # 未设置 grayScene 的历史 @EasyAtTransactional 不受灰度配置影响，保持全量 AT。
+  gray:
+    mode: FULL                         # OFF / GRAY / FULL
+    default-percentage: 0
+    rules:
+      order-place:
+        percentage: 10                 # 0~100，内部按 10000 个桶稳定分流
+        salt: order-place-v1            # 发布期间保持稳定，修改会导致用户换桶
+        whitelist: ["internal-user-1"]
+        blacklist: ["risk-user-9"]
+
   # ---- 事务存储：file / jdbc / redis / hybrid ----
   storage:
     type: file                         # 默认 file；生产用 jdbc 或 hybrid

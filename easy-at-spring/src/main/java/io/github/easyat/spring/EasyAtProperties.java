@@ -40,6 +40,9 @@ public class EasyAtProperties {
     /** 运维管理端点配置（开关、token）。 */
     private final Management management = new Management();
 
+    /** 根 AT 事务灰度配置；只控制新 XID，不影响已有事务、恢复和回滚。 */
+    private final Gray gray = new Gray();
+
     /**
      * Names of DataSource beans that must NOT be wrapped by the AT proxy (e.g. readonly replicas).
      */
@@ -117,6 +120,10 @@ public class EasyAtProperties {
 
     public Management getManagement() {
         return management;
+    }
+
+    public Gray getGray() {
+        return gray;
     }
 
     public Map<String, ResourceConfig> getResources() {
@@ -418,6 +425,84 @@ public class EasyAtProperties {
         public void setToken(String v) {
             this.token = v;
         }
+    }
+
+    public static class Gray {
+        /** OFF=停止新事务，GRAY=按规则分桶，FULL=全量。默认 FULL 保持向后兼容。 */
+        private String mode = "FULL";
+
+        private int defaultPercentage = 0;
+        private Map<String, GrayRule> rules = new HashMap<String, GrayRule>();
+
+        public String getMode() {
+            return mode;
+        }
+
+        public void setMode(String mode) {
+            this.mode = mode;
+        }
+
+        public int getDefaultPercentage() {
+            return defaultPercentage;
+        }
+
+        public void setDefaultPercentage(int percentage) {
+            checkPercentage(percentage);
+            this.defaultPercentage = percentage;
+        }
+
+        public Map<String, GrayRule> getRules() {
+            return rules;
+        }
+
+        public void setRules(Map<String, GrayRule> rules) {
+            this.rules = rules == null ? new HashMap<String, GrayRule>() : rules;
+        }
+    }
+
+    public static class GrayRule {
+        private int percentage;
+        private String salt = "";
+        private Set<String> whitelist = new HashSet<String>();
+        private Set<String> blacklist = new HashSet<String>();
+
+        public int getPercentage() {
+            return percentage;
+        }
+
+        public void setPercentage(int percentage) {
+            checkPercentage(percentage);
+            this.percentage = percentage;
+        }
+
+        public String getSalt() {
+            return salt;
+        }
+
+        public void setSalt(String salt) {
+            this.salt = salt;
+        }
+
+        public Set<String> getWhitelist() {
+            return whitelist;
+        }
+
+        public void setWhitelist(Set<String> whitelist) {
+            this.whitelist = whitelist == null ? new HashSet<String>() : whitelist;
+        }
+
+        public Set<String> getBlacklist() {
+            return blacklist;
+        }
+
+        public void setBlacklist(Set<String> blacklist) {
+            this.blacklist = blacklist == null ? new HashSet<String>() : blacklist;
+        }
+    }
+
+    private static void checkPercentage(int percentage) {
+        if (percentage < 0 || percentage > 100)
+            throw new IllegalArgumentException("easy-at.gray percentage must be between 0 and 100");
     }
 
     public static class ResourceConfig {

@@ -53,7 +53,7 @@ public final class AtTransactionManager {
 
     public AtTransactionManager(
             AtRepository r, UndoExecutor u, GlobalLockManager locks, int maxRetries) {
-        this(r, u, locks, maxRetries, null, DEFAULT_ROLLBACK_LEASE_MILLIS);
+        this(r, u, locks, maxRetries, null, DEFAULT_ROLLBACK_LEASE_MILLIS, null);
     }
 
     public AtTransactionManager(

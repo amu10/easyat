@@ -388,8 +388,19 @@ public class EasyAtAutoConfiguration {
      * @return AT 切面
      */
     @Bean
-    EasyAtAspect easyAtAspect(AtTransactionManager m, BranchCoordinator c, EasyAtMetrics metrics) {
-        return new EasyAtAspect(m, c, metrics);
+    @ConditionalOnMissingBean
+    AtGrayDecider easyAtGrayDecider(EasyAtProperties properties) {
+        return new PropertiesAtGrayDecider(properties);
+    }
+
+    @Bean
+    EasyAtAspect easyAtAspect(
+            AtTransactionManager m,
+            BranchCoordinator c,
+            EasyAtMetrics metrics,
+            AtGrayDecider grayDecider,
+            EasyAtProperties properties) {
+        return new EasyAtAspect(m, c, metrics, grayDecider, properties);
     }
 
     /**

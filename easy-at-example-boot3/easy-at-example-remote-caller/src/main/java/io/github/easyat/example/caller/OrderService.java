@@ -30,7 +30,11 @@ public class OrderService {
         this.inventory = inventory;
     }
 
-    @EasyAtTransactional(name = "place-order", timeout = 30000)
+    @EasyAtTransactional(
+            name = "place-order",
+            timeout = 30000,
+            grayScene = "order-place",
+            grayKey = "#p0")
     @Transactional
     public String placeOrder(long userId, long itemId, int qty, boolean fail) {
         int unitPrice = 10; // 演示用固定单价

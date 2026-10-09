@@ -64,6 +64,15 @@ public final class EasyAtMetrics {
         lockConflicts.increment();
     }
 
+    public void recordGrayDecision(String scene, AtGrayDecision decision) {
+        Counter.builder("easyat.gray.decisions")
+                .tag("scene", scene == null || scene.isEmpty() ? "legacy" : scene)
+                .tag("decision", decision.isEnabled() ? "enabled" : "disabled")
+                .tag("reason", decision.getReason())
+                .register(registry)
+                .increment();
+    }
+
     public void recordManualIntervention() {
         manualInterventions.increment();
     }
