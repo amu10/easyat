@@ -29,6 +29,13 @@ public final class AtTransactionManager {
     private final GlobalLockManager lockManager;
     private final int maxRetries;
 
+    /**
+     * undo 的独立存储（混合存储模式）。为 null 时表示 undo 跟随 {@link #repository}。
+     *
+     * <p>混合模式下 undo 必须在业务库（跟着业务本地事务提交），而全局状态在 Redis，两者不是同一个存储。
+     */
+    private final UndoRepository undoRepository;
+
     /** 本实例标识；为 null 表示不启用跨实例租约保护（单实例嵌入式用法）。 */
     private final String owner;
 
@@ -56,12 +63,56 @@ public final class AtTransactionManager {
             int maxRetries,
             String owner,
             long rollbackLeaseMillis) {
+        this(r, u, locks, maxRetries, owner, rollbackLeaseMillis, null);
+    }
+
+    /**
+     * 混合存储构造器：全局状态走 {@code repository}，undo 走 {@code undoRepository}。
+     *
+     * <p>{@code undoRepository} 传 null 等价于"undo 跟随 repository"的既有行为，因此历史构造器语义不变。
+     */
+    public AtTransactionManager(
+            AtRepository r,
+            UndoExecutor u,
+            GlobalLockManager locks,
+            int maxRetries,
+            String owner,
+            long rollbackLeaseMillis,
+            UndoRepository undoRepository) {
         repository = r;
         undoExecutor = u;
         lockManager = locks;
         this.maxRetries = maxRetries;
         this.owner = owner;
         this.rollbackLeaseMillis = rollbackLeaseMillis;
+        this.undoRepository = undoRepository;
+    }
+
+    /**
+     * undo 到底写哪里：显式注入优先，否则若 {@code AtRepository} 自己也实现了 {@link UndoRepository}
+     * （{@code JdbcAtRepository} 就是这种），则直接用它——这样单存储模式不需要额外装配。
+     */
+    private UndoRepository undoStore() {
+        if (undoRepository != null) return undoRepository;
+        if (repository instanceof UndoRepository) return (UndoRepository) repository;
+        return null;
+    }
+
+    /**
+     * undo + 重试簿记的持久化出口。
+     *
+     * <p>单一存储时原样 {@code repository.save}（一个本地事务里写完 undo 与簿记）；混合存储时 undo
+     * 写业务库、簿记写 Redis——两者不在同一个事务里，但簿记字段（重试次数/下次重试时间）本来就允许最终一致，
+     * 真正要求与业务原子的是 undo 本身。
+     */
+    private void persist(AtTransaction tx) {
+        UndoRepository store = undoStore();
+        if (store == null || store == repository) {
+            repository.save(tx);
+            return;
+        }
+        store.replaceAll(tx.getXid(), tx.getUndoRecords());
+        repository.updateRecovery(tx.getXid(), tx.getRetries(), tx.getNextRetryAt());
     }
 
     /** 开启一个全局事务：生成 XID、持久化 ACTIVE 行、绑定到当前线程上下文。 */
@@ -93,7 +144,7 @@ public final class AtTransactionManager {
         AtTransaction tx = required(record.getXid());
         ensureModifiable(tx);
         tx.addUndo(record);
-        repository.save(tx);
+        persist(tx);
     }
 
     /**
@@ -105,12 +156,13 @@ public final class AtTransactionManager {
     public void append(Connection connection, UndoRecord record) {
         AtTransaction tx = required(record.getXid());
         ensureModifiable(tx);
-        if (repository instanceof ConnectionBoundAtRepository) {
-            ((ConnectionBoundAtRepository) repository).append(connection, record);
+        UndoRepository store = undoStore();
+        if (store instanceof ConnectionBoundUndoRepository) {
+            ((ConnectionBoundUndoRepository) store).append(connection, record);
             return;
         }
         tx.addUndo(record);
-        repository.save(tx);
+        persist(tx);
     }
 
     /** 只有 ACTIVE 的事务还能继续产生 undo。 */
@@ -129,28 +181,32 @@ public final class AtTransactionManager {
         for (UndoRecord r : tx.getUndoRecords())
             if (r.getId().equals(undoId)) {
                 r.setAfterImage(after);
-                repository.save(tx);
+                persist(tx);
                 return;
             }
         throw new AtException("Undo record not found: " + undoId);
     }
 
     public void updateUndo(Connection connection, String xid, String undoId, RowImage after) {
-        if (repository instanceof ConnectionBoundAtRepository) {
-            ((ConnectionBoundAtRepository) repository).updateUndo(connection, xid, undoId, after);
+        UndoRepository store = undoStore();
+        if (store instanceof ConnectionBoundUndoRepository) {
+            ((ConnectionBoundUndoRepository) store)
+                    .updateUndo(connection, xid, undoId, after);
             return;
         }
         updateUndo(xid, undoId, after);
     }
 
     public void discardUndo(Connection connection, String xid, String undoId) {
-        if (repository instanceof ConnectionBoundAtRepository) {
-            ((ConnectionBoundAtRepository) repository).removeUndo(connection, xid, undoId);
+        UndoRepository store = undoStore();
+        if (store instanceof ConnectionBoundUndoRepository) {
+            ((ConnectionBoundUndoRepository) store)
+                    .removeUndo(connection, xid, undoId);
             return;
         }
         AtTransaction tx = required(xid);
         tx.removeUndo(undoId);
-        repository.save(tx);
+        persist(tx);
     }
 
     /** 提交：ACTIVE→COMMITTING→COMMITTED 两步 CAS，成功后释放该 XID 持有的所有全局锁。 */
@@ -211,7 +267,7 @@ public final class AtTransactionManager {
                 if (!r.isRolledBack()) {
                     undoExecutor.rollback(r);
                     r.markRolledBack();
-                    repository.save(tx);
+                    persist(tx);
                 }
             }
             if (!transition(tx, AtStatus.ROLLED_BACK))
@@ -347,9 +403,14 @@ public final class AtTransactionManager {
     }
 
     private AtTransaction required(String xid) {
-        return repository
-                .find(xid)
-                .orElseThrow(() -> new AtException("Transaction not found: " + xid));
+        AtTransaction tx =
+                repository
+                        .find(xid)
+                        .orElseThrow(() -> new AtException("Transaction not found: " + xid));
+        // 混合存储：全局状态在 Redis、undo 在业务库。只有显式注入时才合并，避免单存储模式重复加载。
+        if (undoRepository != null && tx.getUndoRecords().isEmpty())
+            for (UndoRecord u : undoRepository.load(xid)) tx.addUndo(u);
+        return tx;
     }
 
     private void release(String xid) {

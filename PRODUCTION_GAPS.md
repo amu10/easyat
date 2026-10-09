@@ -581,7 +581,7 @@ SELECT account.* FROM account WHERE id IN (SELECT aid FROM frozen WHERE status =
 |---|---|---|---|
 | 1 | **0.1.2 没有发布到 Maven Central** | `git log`：`main` ahead `origin/main` 2 个提交（`01d0d24` 通用 SQL 路径、`afad91b` 文档）；Central 上只有修复前的 0.1.1 | `git push` + `mvn deploy -Prelease`，Portal 上 Publish。**在 0.1.2 可用之前，用户拿到的仍是缺陷版本** |
 | 2 | **零 soak / 零压测数据** | 全仓库无 JMH/Gatling/基准脚本 | 至少给出：单条写 undo 的 RT 增量、热点行锁等待、通用快照路径多一次 SELECT 的开销。核心链路放量前必须有 |
-| 3 | **Redis 存储无历史清理、无 TTL** | `AtCleanupScheduler` 构造参数强绑 `JdbcAtCleaner`（`@ConditionalOnBean(JdbcAtCleaner.class)`）；全仓库搜索 `expire(` / `setex` / `ttl` 无命中 | 用 Redis 存储＝`easy-at:*` 键只增不减，内存持续增长，且实例重启即丢事务状态。**若选 Redis 存储，这是硬卡点**；选 JDBC 存储则不受影响 |
+| 3 | **Redis 存储既无历史清理也无 TTL，且 undo 不与业务本地事务原子提交** | `AtCleanupScheduler` 构造参数强绑 `JdbcAtCleaner`（starter 上另有 `@ConditionalOnBean(JdbcAtCleaner.class)`），Redis 模式下该 Bean 根本不存在；`AtRepository` 接口无 `delete`/`purge`；全仓搜索 `expire(` / `setex` / `ttl` 零命中；`RedisAtRepository` **只** `implements AtRepository`，未实现 `ConnectionBoundAtRepository` | **生产不要用 Redis 存 undo**，详见 §18.4；改 JDBC 存储则不受影响 |
 | 4 | **多实例"跨进程"崩溃演练未做** | `ConcurrentRecoveryTest` 是单 JVM 多线程 + 独立 owner，没有 `kill -9` / 断网 / 容器驱逐 | 真实集群下 kill 实例验证租约接管与补偿唯一性 |
 | 5 | **业务 SQL 未过 AT 边界** | 拒绝清单见 `SQL_COMPATIBILITY.md`：多目标表 DML、`SET pk=?`、无/复合主键表、`INSERT...SELECT`、`ON DUPLICATE KEY`、依赖自增主键却不写主键列 | 拿生产真实 SQL 全量过一遍，看有没有踩线（`UnsupportedAtSqlException` 会被直接拒绝执行） |
 
@@ -599,3 +599,70 @@ SELECT account.* FROM account WHERE id IN (SELECT aid FROM frozen WHERE status =
 
 - 分库分表（ShardingSphere 等代理数据源）、读写分离多数据源、DDL、`TRUNCATE`、`MERGE`、存储过程均未支持也未验证。
 - 一行一锁：热点行的并发写会被全局锁串行化，`GlobalLockConflictException` 随热点上升——这是 AT 的固有代价，不是本实现的 bug。
+
+### 18.4 Redis 存储的完整风险评估（2026-10-09 追加）
+
+用户问："存储改成 Redis、undo 也存 Redis，会不会出现存储过多不回收？"
+
+**会。而且"不回收"只是三个问题里最轻的一个。**
+
+#### 问题一（最严重）：undo 不再与业务 DML 原子提交
+
+`AtTransactionManager#append(Connection, UndoRecord)` 的分支：
+
+```java
+if (repository instanceof ConnectionBoundAtRepository) {
+    ((ConnectionBoundAtRepository) repository).append(connection, record);  // 走业务连接
+    return;
+}
+tx.addUndo(record);
+repository.save(tx);   // ← Redis 落到这里：立刻独立写 Redis，与业务本地事务无关
+```
+
+`ConnectionBoundAtRepository` 全仓只有 `JdbcAtRepository` 实现；`RedisAtRepository implements AtRepository`，
+所以 Redis 模式下 **undo 写在业务本地事务之外**。这与 §2.3「本地事务强制保障」直接冲突：
+
+- 业务本地事务回滚，undo 却已落 Redis → 恢复调度会对一条从未真正改动的行执行回滚 SQL；
+- Redis 写失败而业务提交成功 → 该行**永久无法回滚**；
+- `UPDATE` 的 after image 通过 `updateUndo` 二次写入，同样是独立写。
+
+这是选型级问题，不是加个清理任务能解决的。
+
+#### 问题二：键只增不减
+
+每个全局事务落下这些键（`prefix` 默认 `easy-at`）：
+
+| 键 | 内容 | 会回收吗 |
+|---|---|---|
+| `easy-at:global:<xid>` | 事务元数据 hash | **永不删除**，终态也留着 |
+| `easy-at:global:status:<status>` | xid 成员集合 | 迁移时 SREM 旧 + SADD 新，但终态集合里的成员**永不移除** |
+| `easy-at:undo:<xid>` | undo id 索引集合 | `save()` 时 DEL 后重建，但**索引本身长期残留** |
+| `easy-at:undo:<xid>:<uuid>` | 单条 undo hash，含 before/after image(base64) | **完全没有删除路径** |
+| `easy-at:branch:<id>` / `branch:uniq:<xid>:<res>` | 分支记录 | **永不删除** |
+| `easy-at:lock:<r>:<t>:<pk>` / `lock:byXid:<xid>` | 全局锁 | ✅ `releaseByXid` 的 `RELEASE_LUA` 会 DEL |
+
+注意 `RedisAtRepository#save()` 里的 `CLEAR_UNDO_LUA = "return redis.call('DEL', KEYS[1]);"`，
+KEYS[1] 是**索引集合** `easy-at:undo:<xid>`，不是那些 `easy-at:undo:<xid>:<uuid>` 实体——
+实体 hash 一旦写过就再也无人引用，连 `recoverable()` 都扫不到它们。
+
+#### 问题三：内存量级
+
+单条 undo 要存整行的 before image **和** after image，JSON 编码后再 base64（×1.33）。
+20 列左右的业务行，单条 undo 约 **3–8 KB**。粗算：
+
+> 日均 100 万全局事务 × 每事务 3 条 DML = 300 万条 undo × ~5 KB ≈ **15 GB/天**
+
+Redis 是内存库，几天就会撞 `maxmemory`。而一旦配了 `allkeys-lru` 之类的淘汰策略，
+**被淘汰的可能正是还没收敛的 undo** —— 那不是报错，是静默地无法回滚。
+
+另外 `save(tx)` 是**全量重写**该事务所有 undo（每条 DML 触发一次），N 条 DML ≈ O(N²) 次 HSET + 网络往返。
+
+#### 结论与建议
+
+- **生产选 JDBC 存储**（`easy-at.storage.type=jdbc`）。undo log 本来就必须和业务 DML 同连接、同事务提交，
+  放在业务库里是唯一能保证这一点的地方——这不是惯例，是 AT 正确性的前提。
+- Redis 存储只适合：功能验证、演示、或者把 `maxmemory_policy` 设成 `noeviction` 且明确接受"内存有限"的场景。
+- 如果确实要继续用 Redis 存储，至少要补三件事（**工作量不小，且补完仍不解决问题一**）：
+  1. `RedisAtRepository` 实现清理：用 zset 按 `created_at` 给终态事务排索引，批量删 `global` / `undo:*` / `branch:*`；
+  2. 给 undo hash 设 TTL，并由活跃事务**续期**（否则 TTL 到期会让未收敛事务失去回滚能力）；
+  3. 与 §2.3 对齐：要么让 Redis 路径也在业务提交后再确认 undo 已持久化，要么显式标注该组合不支持。

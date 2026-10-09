@@ -8,7 +8,8 @@ import javax.sql.DataSource;
 /**
  * JDBC-backed source of truth for global transactions and undo records. All status changes use CAS.
  */
-public final class JdbcAtRepository implements ConnectionBoundAtRepository {
+public final class JdbcAtRepository
+        implements ConnectionBoundAtRepository, ConnectionBoundUndoRepository {
     private final DataSource dataSource;
     private final UndoDataCodec codec;
 
@@ -279,17 +280,71 @@ public final class JdbcAtRepository implements ConnectionBoundAtRepository {
     }
 
     private void loadUndo(Connection c, AtTransaction tx) throws SQLException {
+        for (UndoRecord u : readUndo(c, tx.getXid())) tx.addUndo(u);
+    }
+
+    /** {@link UndoRepository#load}：混合存储模式下由 {@code AtTransactionManager} 调用。 */
+    @Override
+    public List<UndoRecord> load(String xid) {
+        try (Connection c = dataSource.getConnection()) {
+            return readUndo(c, xid);
+        } catch (SQLException e) {
+            throw new AtException("Cannot load undo records for " + xid, e);
+        }
+    }
+
+    /** {@link UndoRepository#replaceAll}：整体重写某个事务的 undo，独立短事务。 */
+    @Override
+    public void replaceAll(String xid, List<UndoRecord> records) {
+        try (Connection c = dataSource.getConnection()) {
+            boolean auto = c.getAutoCommit();
+            try {
+                c.setAutoCommit(false);
+                deleteUndo(c, xid);
+                for (UndoRecord u : records) insertUndo(c, u);
+                c.commit();
+            } catch (Exception e) {
+                c.rollback();
+                if (e instanceof AtException) throw (AtException) e;
+                throw new AtException("Cannot replace undo records for " + xid, e);
+            } finally {
+                c.setAutoCommit(auto);
+            }
+        } catch (SQLException e) {
+            throw new AtException("Cannot replace undo records for " + xid, e);
+        }
+    }
+
+    /** {@link UndoRepository#deleteByXid}：清理链路用。 */
+    @Override
+    public void deleteByXid(String xid) {
+        try (Connection c = dataSource.getConnection()) {
+            deleteUndo(c, xid);
+        } catch (SQLException e) {
+            throw new AtException("Cannot delete undo records for " + xid, e);
+        }
+    }
+
+    private void deleteUndo(Connection c, String xid) throws SQLException {
+        try (PreparedStatement d = c.prepareStatement("DELETE FROM easy_at_undo_log WHERE xid=?")) {
+            d.setString(1, xid);
+            d.executeUpdate();
+        }
+    }
+
+    private List<UndoRecord> readUndo(Connection c, String xid) throws SQLException {
+        List<UndoRecord> out = new ArrayList<UndoRecord>();
         try (PreparedStatement p =
                 c.prepareStatement(
                         "SELECT undo_id,resource_id,table_name,pk_name,pk_value,rollback_sql,rollback_params,before_image,after_image,status FROM easy_at_undo_log WHERE xid=? ORDER BY created_at")) {
-            p.setString(1, tx.getXid());
+            p.setString(1, xid);
             try (ResultSet r = p.executeQuery()) {
                 while (r.next()) {
                     UndoContext ctx = new UndoContext(r.getString(2), r.getString(3));
                     UndoRecord u =
                             new UndoRecord(
                                     r.getString(1),
-                                    tx.getXid(),
+                                    xid,
                                     r.getString(2),
                                     r.getString(3),
                                     r.getString(4),
@@ -299,10 +354,11 @@ public final class JdbcAtRepository implements ConnectionBoundAtRepository {
                     u.setBeforeImage(codec.decodeRowImage(r.getBytes(8), ctx));
                     u.setAfterImage(codec.decodeRowImage(r.getBytes(9), ctx));
                     if ("ROLLED_BACK".equals(r.getString(10))) u.markRolledBack();
-                    tx.addUndo(u);
+                    out.add(u);
                 }
             }
         }
+        return out;
     }
 
     private void insertUndo(Connection c, UndoRecord u) throws SQLException {

@@ -3,6 +3,7 @@ package io.github.easyat.storage.redis;
 import io.github.easyat.core.*;
 import io.github.easyat.jdbc.JacksonUndoDataCodec;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 
@@ -34,14 +35,36 @@ public final class RedisAtRepository implements AtRepository {
     private final UndoDataCodec codec;
     private final String prefix;
 
+    /**
+     * 兜底 TTL（秒）。每个键在每次被写入时刷新一次，因此"有人在推进的事务"永远不会过期；
+     * 只有彻底没人管、且清理器也挂掉的孤儿键才会最终被 Redis 回收。0 表示不设 TTL。
+     */
+    private final long ttlSeconds;
+    private final RedisCleanup cleanup;
+
     public RedisAtRepository(JedisPool pool) {
         this(pool, new JacksonUndoDataCodec(), "easy-at");
     }
 
     public RedisAtRepository(JedisPool pool, UndoDataCodec codec, String prefix) {
+        this(pool, codec, prefix, TimeUnit.DAYS.toSeconds(30));
+    }
+
+    public RedisAtRepository(JedisPool pool, UndoDataCodec codec, String prefix, long ttlSeconds) {
         this.pool = pool;
         this.codec = codec;
         this.prefix = prefix == null ? "easy-at" : prefix;
+        this.ttlSeconds = ttlSeconds > 0 ? ttlSeconds : 0L;
+        this.cleanup = new RedisCleanup(pool, this.prefix, this.ttlSeconds);
+    }
+
+    /** 该存储配套的清理器。starter 装配到定时调度上。 */
+    public RedisCleanup cleanup() {
+        return cleanup;
+    }
+
+    protected String prefix() {
+        return prefix;
     }
 
     private String gkey(String xid) {
@@ -50,6 +73,11 @@ public final class RedisAtRepository implements AtRepository {
 
     private String statusSet(String status) {
         return prefix + ":global:status:" + status;
+    }
+
+    /** 清理索引：member = xid，score = 最后更新时间。清理器靠它按时间批量捞过期候选。 */
+    String cleanupIndex() {
+        return prefix + ":cleanup:index";
     }
 
     private String undoKey(String xid) {
@@ -71,32 +99,48 @@ public final class RedisAtRepository implements AtRepository {
                     + " 'next_retry_at',ARGV[5], 'version',ARGV[6], 'owner',ARGV[7], 'lease_until',ARGV[8],"
                     + " 'created_at',ARGV[9], 'updated_at',ARGV[10]);"
                     + "redis.call('SADD', KEYS[2], ARGV[11]);"
+                    + "redis.call('ZADD', KEYS[3], ARGV[10], ARGV[11]);"
+                    + "if tonumber(ARGV[12])>0 then redis.call('EXPIRE', KEYS[1], ARGV[12]); end;"
                     + "return 1;";
 
-    /** 清空该事务的 undo 索引。save() 是整体重写，不增量合并。 */
-    private static final String CLEAR_UNDO_LUA = "return redis.call('DEL', KEYS[1]);";
+    /**
+     * 清空该事务的 undo：索引集合<b>和它引用的所有 undo 实体</b>都要删。
+     *
+     * <p>旧实现只 DEL 索引集合，实体 hash 从此再无人引用——既占内存，又连扫描都扫不到。
+     * save() 是整体重写，所以这里必须连实体一起删干净。
+     */
+    private static final String CLEAR_UNDO_LUA =
+            "local set=KEYS[1]; local pfx=ARGV[1]; local xid=ARGV[2];"
+                    + "local members=redis.call('SMEMBERS', set);"
+                    + "for i=1,#members do redis.call('DEL', pfx..':undo:'..xid..':'..members[i]); end;"
+                    + "redis.call('DEL', set); return #members;";
 
     private static final String WRITE_UNDO_LUA =
-            "redis.call('DEL', KEYS[1]);"
-                    + "redis.call('HSET', KEYS[1],"
+            "redis.call('HSET', KEYS[1],"
                     + " 'resource_id',ARGV[1], 'table_name',ARGV[2], 'pk_name',ARGV[3], 'pk_value',ARGV[4],"
                     + " 'rollback_sql',ARGV[5], 'rollback_params',ARGV[6], 'status',ARGV[7]);"
                     + "if ARGV[8] ~= '' then redis.call('HSET', KEYS[1], 'before_image', ARGV[8]); end;"
                     + "if ARGV[9] ~= '' then redis.call('HSET', KEYS[1], 'after_image', ARGV[9]); end;"
                     + "redis.call('SADD', KEYS[2], ARGV[10]);"
+                    + "if tonumber(ARGV[11])>0 then redis.call('EXPIRE', KEYS[1], ARGV[11]); redis.call('EXPIRE', KEYS[2], ARGV[11]); end;"
                     + "return 1;";
 
     private static final String UPDATE_RECOVERY_LUA =
             "redis.call('HSET', KEYS[1], 'retry_count',ARGV[1], 'next_retry_at',ARGV[2],"
-                    + " 'updated_at',ARGV[3]); return 1;";
+                    + " 'updated_at',ARGV[3]); redis.call('ZADD', KEYS[2], ARGV[3], ARGV[4]);"
+                    + "if tonumber(ARGV[5])>0 then redis.call('EXPIRE', KEYS[1], ARGV[5]); end;"
+                    + "return 1;";
 
     private static final String TRANSITION_LUA =
-            "local key=KEYS[1]; local oldSet=KEYS[2]; local newSet=KEYS[3];"
+            "local key=KEYS[1]; local oldSet=KEYS[2]; local newSet=KEYS[3]; local idx=KEYS[4];"
                     + "local xid=ARGV[1]; local expected=ARGV[2]; local expectedVer=ARGV[3]; local nextStatus=ARGV[4]; local now=ARGV[5];"
                     + "if redis.call('HGET',key,'status')~=expected then return 0 end;"
                     + "if tonumber(redis.call('HGET',key,'version'))~=tonumber(expectedVer) then return 0 end;"
                     + "redis.call('HSET',key,'status',nextStatus,'version',tonumber(redis.call('HGET',key,'version'))+1,'updated_at',now);"
-                    + "redis.call('SREM',oldSet,xid); redis.call('SADD',newSet,xid); return 1;";
+                    + "redis.call('SREM',oldSet,xid); redis.call('SADD',newSet,xid);"
+                    + "redis.call('ZADD',idx,now,xid);"
+                    + "if tonumber(ARGV[6])>0 then redis.call('EXPIRE',key,ARGV[6]); end;"
+                    + "return 1;";
     private static final String CLAIM_LUA =
             "local key=KEYS[1]; local owner=ARGV[1]; local leaseUntil=ARGV[2]; local now=ARGV[3];"
                     + "local status=redis.call('HGET',key,'status');"
@@ -116,7 +160,7 @@ public final class RedisAtRepository implements AtRepository {
             eval(
                     j,
                     CREATE_LUA,
-                    new String[] {gkey(tx.getXid()), statusSet(tx.getStatus().name())},
+                    new String[] {gkey(tx.getXid()), statusSet(tx.getStatus().name()), cleanupIndex()},
                     new String[] {
                         tx.getName(),
                         tx.getStatus().name(),
@@ -128,7 +172,8 @@ public final class RedisAtRepository implements AtRepository {
                         "0",
                         String.valueOf(now),
                         String.valueOf(now),
-                        tx.getXid()
+                        tx.getXid(),
+                        String.valueOf(ttlSeconds)
                     });
         }
     }
@@ -191,7 +236,11 @@ public final class RedisAtRepository implements AtRepository {
     @Override
     public void save(AtTransaction tx) {
         try (Jedis j = pool.getResource()) {
-            eval(j, CLEAR_UNDO_LUA, new String[] {undoKey(tx.getXid())}, new String[0]);
+            eval(
+                    j,
+                    CLEAR_UNDO_LUA,
+                    new String[] {undoKey(tx.getXid())},
+                    new String[] {prefix, tx.getXid()});
             for (UndoRecord u : tx.getUndoRecords()) {
                 UndoContext ctx = new UndoContext(u.getResourceId(), u.getTableName());
                 String before =
@@ -216,7 +265,8 @@ public final class RedisAtRepository implements AtRepository {
                             u.isRolledBack() ? "ROLLED_BACK" : "EXECUTED",
                             before,
                             after,
-                            u.getId()
+                            u.getId(),
+                            String.valueOf(ttlSeconds)
                         });
             }
         }
@@ -230,14 +280,15 @@ public final class RedisAtRepository implements AtRepository {
                             j,
                             TRANSITION_LUA,
                             new String[] {
-                                gkey(xid), statusSet(expected.name()), statusSet(next.name())
+                                gkey(xid), statusSet(expected.name()), statusSet(next.name()), cleanupIndex()
                             },
                             new String[] {
                                 xid,
                                 expected.name(),
                                 String.valueOf(expectedVersion),
                                 next.name(),
-                                String.valueOf(System.currentTimeMillis())
+                                String.valueOf(System.currentTimeMillis()),
+                                String.valueOf(ttlSeconds)
                             });
             return "1".equals(String.valueOf(res));
         }
@@ -270,11 +321,13 @@ public final class RedisAtRepository implements AtRepository {
             eval(
                     j,
                     UPDATE_RECOVERY_LUA,
-                    new String[] {gkey(xid)},
+                    new String[] {gkey(xid), cleanupIndex()},
                     new String[] {
                         String.valueOf(retries),
                         String.valueOf(nextRetryAt),
-                        String.valueOf(System.currentTimeMillis())
+                        String.valueOf(System.currentTimeMillis()),
+                        xid,
+                        String.valueOf(ttlSeconds)
                     });
         }
     }

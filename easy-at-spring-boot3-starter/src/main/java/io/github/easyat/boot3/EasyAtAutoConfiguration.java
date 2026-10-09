@@ -108,7 +108,19 @@ public class EasyAtAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    AtTransactionManager easyAtManager(AtRepository r, UndoExecutor u, GlobalLockManager l) {
+    @ConditionalOnProperty(prefix = "easy-at.storage", name = "type", havingValue = "hybrid")
+    UndoRepository jdbcUndoRepository(DataSource dataSource, UndoDataCodec codec) {
+        // 混合存储：undo 必须在业务库，跟着业务本地事务一起提交/回滚。
+        return new JdbcUndoRepository(dataSource, codec);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    AtTransactionManager easyAtManager(
+            AtRepository r,
+            UndoExecutor u,
+            GlobalLockManager l,
+            ObjectProvider<UndoRepository> undoRepository) {
         // owner 必须与 AtRecoveryScheduler 一致：调度器先抢租约再驱动回滚，同 owner 才可重入。
         // 回滚期用一份独立的（更长）租约，避免长补偿过程中被误判过期而遭他人接管。
         return new AtTransactionManager(
@@ -119,7 +131,8 @@ public class EasyAtAutoConfiguration {
                 owner,
                 Math.max(
                         props.getRecovery().getLease().toMillis(),
-                        AtTransactionManager.DEFAULT_ROLLBACK_LEASE_MILLIS));
+                        AtTransactionManager.DEFAULT_ROLLBACK_LEASE_MILLIS),
+                undoRepository.getIfAvailable());
     }
 
     @Bean
