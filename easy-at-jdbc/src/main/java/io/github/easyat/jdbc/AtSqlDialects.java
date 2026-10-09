@@ -6,8 +6,8 @@ import java.sql.SQLException;
 import javax.sql.DataSource;
 
 /**
- * 方言解析器：从 DataSource 的 JDBC 元数据里读出数据库产品名，据此挑选具体方言实现。
- * 连不上库或读不到元数据时回退到 GenericAtSqlDialect，保证 AT 仍可用（只是不做引用）。
+ * 方言解析器：从 DataSource 的 JDBC 元数据里读出数据库产品名，据此挑选具体方言实现。 连不上库或读不到元数据时回退到 GenericAtSqlDialect，保证 AT
+ * 仍可用（只是不做引用）。
  */
 // Resolves the active dialect from a DataSource's JDBC metadata.
 public final class AtSqlDialects {
@@ -17,8 +17,7 @@ public final class AtSqlDialects {
     /**
      * 通过 DataSource 打开一条连接读取 JDBC 元数据来探测方言。
      *
-     * <p>任何异常（连接失败、元数据为空）都不会上抛，而是静默回退到 GenericAtSqlDialect，
-     * 让 AT 在未知/受限环境里依然可用。
+     * <p>任何异常（连接失败、元数据为空）都不会上抛，而是静默回退到 GenericAtSqlDialect， 让 AT 在未知/受限环境里依然可用。
      *
      * @param dataSource 业务数据源
      * @return 探测到的方言实现

@@ -29,6 +29,7 @@ import org.springframework.context.annotation.Bean;
 public class EasyAtAutoConfiguration {
     /** 绑定的 easy-at 配置属性（来自 {@code EasyAtProperties}）。 */
     private final EasyAtProperties props;
+
     /** 本实例标识：{@code 应用名@主机名}，恢复/清理调度器抢租约时用作 owner 去重。 */
     private final String owner;
 
@@ -127,7 +128,7 @@ public class EasyAtAutoConfiguration {
      * 混合存储模式的 undo 仓库：undo 必须落在业务库，与业务本地事务一起提交/回滚。
      *
      * @param dataSource 业务库数据源
-     * @param codec      undo 数据编解码器
+     * @param codec undo 数据编解码器
      * @return 基于 JDBC 的 undo 仓库
      */
     @Bean
@@ -141,9 +142,9 @@ public class EasyAtAutoConfiguration {
     /**
      * 核心事务管理器：协调全局事务的开启/提交/回滚、分支注册、全局锁与 undo 补偿。
      *
-     * @param r             全局事务/分支/锁存储仓库
-     * @param u             undo 执行器
-     * @param l             全局锁管理器
+     * @param r 全局事务/分支/锁存储仓库
+     * @param u undo 执行器
+     * @param l 全局锁管理器
      * @param undoRepository 可选：混合存储下的 undo 仓库（缺失则为 null）
      * @return AT 事务管理器
      */
@@ -224,9 +225,9 @@ public class EasyAtAutoConfiguration {
      * 分支协调器：二阶段提交时驱动各分支的 commit/rollback，并对协调请求做 HMAC 验签。
      *
      * @param branches 分支仓库
-     * @param manager  事务管理器
-     * @param signer   HMAC 签名器
-     * @param metrics  指标收集器
+     * @param manager 事务管理器
+     * @param signer HMAC 签名器
+     * @param metrics 指标收集器
      * @return 分支协调器
      */
     @Bean
@@ -256,7 +257,7 @@ public class EasyAtAutoConfiguration {
      * 分支协调服务：把协调器与传输安全封装为对外的协调接口（注册/提交/回滚）。
      *
      * @param coordinator 分支协调器
-     * @param security    传输安全组件
+     * @param security 传输安全组件
      * @return 协调服务
      */
     @Bean
@@ -267,12 +268,11 @@ public class EasyAtAutoConfiguration {
     }
 
     /**
-     * 对账服务：比对全局事务状态与分支状态，发现「全局已提交但分支未提交」等不一致，
-     * 供影子运行期间灰度校验（固定 60s 超时、每批 1000 条）。
+     * 对账服务：比对全局事务状态与分支状态，发现「全局已提交但分支未提交」等不一致， 供影子运行期间灰度校验（固定 60s 超时、每批 1000 条）。
      *
-     * @param r       全局事务仓库
+     * @param r 全局事务仓库
      * @param branches 分支仓库（可选，缺失时为 null）
-     * @param locks   全局锁管理器
+     * @param locks 全局锁管理器
      * @return 对账服务
      */
     @Bean
@@ -288,10 +288,10 @@ public class EasyAtAutoConfiguration {
     /**
      * 管理/运维服务：提供事务查询、列表、对账、人工重试/回滚等能力，受 token 保护。
      *
-     * @param r             全局事务仓库
-     * @param m             事务管理器（用于人工触发回滚/重试）
-     * @param metrics       指标收集器
-     * @param codec         undo 数据编解码器（用于解析/展示 image）
+     * @param r 全局事务仓库
+     * @param m 事务管理器（用于人工触发回滚/重试）
+     * @param metrics 指标收集器
+     * @param codec undo 数据编解码器（用于解析/展示 image）
      * @param reconciliation 对账服务（注入到管理服务的可选能力）
      * @return 管理/运维服务
      */
@@ -318,10 +318,10 @@ public class EasyAtAutoConfiguration {
     /**
      * 恢复调度器：定时扫描过期/悬挂的全局事务并驱动回滚补偿，多实例靠 owner 抢租约互斥。
      *
-     * @param r          全局事务仓库
-     * @param m          事务管理器
+     * @param r 全局事务仓库
+     * @param m 事务管理器
      * @param coordinator 分支协调器
-     * @param metrics    指标收集器
+     * @param metrics 指标收集器
      * @return 已启动的恢复调度器
      */
     @Bean(destroyMethod = "close")
@@ -353,9 +353,9 @@ public class EasyAtAutoConfiguration {
     /**
      * 分支重试调度器：定时重试仍处于重试中状态的分支事务，直至达到最大重试次数。
      *
-     * @param branches    分支仓库
+     * @param branches 分支仓库
      * @param coordinator 分支协调器
-     * @param metrics     指标收集器
+     * @param metrics 指标收集器
      * @return 已启动的分支重试调度器
      */
     @Bean(destroyMethod = "close")
@@ -382,8 +382,8 @@ public class EasyAtAutoConfiguration {
     /**
      * AT 切面：拦截事务注解，驱动全局事务的开启/提交/回滚，并在分支侧登记数据源与分支信息。
      *
-     * @param m       事务管理器
-     * @param c       分支协调器
+     * @param m 事务管理器
+     * @param c 分支协调器
      * @param metrics 指标收集器
      * @return AT 切面
      */
@@ -393,15 +393,14 @@ public class EasyAtAutoConfiguration {
     }
 
     /**
-     * 数据源后置处理器（静态 @Bean）：把每个 {@link javax.sql.DataSource} 包装为能感知 AT 的代理，
-     * 在连接上挂载全局锁与分支登记逻辑。
+     * 数据源后置处理器（静态 @Bean）：把每个 {@link javax.sql.DataSource} 包装为能感知 AT 的代理， 在连接上挂载全局锁与分支登记逻辑。
      *
      * <p>分支登记器用 Supplier 延迟获取分支仓库，规避与分支仓库 Bean 的初始化顺序依赖。
      *
-     * @param m         事务管理器（延迟获取）
-     * @param l         全局锁管理器（延迟获取）
+     * @param m 事务管理器（延迟获取）
+     * @param l 全局锁管理器（延迟获取）
      * @param branchRepo 分支仓库（延迟获取）
-     * @param p         配置属性
+     * @param p 配置属性
      * @return 数据源后置处理器
      */
     @Bean
@@ -439,7 +438,7 @@ public class EasyAtAutoConfiguration {
     /**
      * XID 传播过滤器注册：把 {@link AtXidFilter} 注册到 Servlet 容器，order=-100 保证尽早执行。
      *
-     * @param m       事务管理器
+     * @param m 事务管理器
      * @param security 传输安全组件（可为 null）
      * @return 过滤器注册 Bean
      */
@@ -464,8 +463,7 @@ public class EasyAtAutoConfiguration {
     }
 
     /**
-     * RestTemplate 定制器：为应用内所有 {@link org.springframework.web.client.RestTemplate}
-     * 自动挂上 XID 传播拦截器。
+     * RestTemplate 定制器：为应用内所有 {@link org.springframework.web.client.RestTemplate} 自动挂上 XID 传播拦截器。
      *
      * @param signer HMAC 签名器
      * @return RestTemplate 定制器
@@ -480,8 +478,7 @@ public class EasyAtAutoConfiguration {
     /**
      * WebClient 定制器：为应用内 WebClient 自动挂上 XID 传播拦截器（响应式场景）。
      *
-     * <p>返回类型声明为 {@code Object} 而非具体类型，是为了在 WebClient 不存在时
-     * 该 Bean 仍能以宽松类型注册、不触发类加载失败。
+     * <p>返回类型声明为 {@code Object} 而非具体类型，是为了在 WebClient 不存在时 该 Bean 仍能以宽松类型注册、不触发类加载失败。
      *
      * @param signer HMAC 签名器
      * @return WebClient 定制器

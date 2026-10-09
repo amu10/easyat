@@ -13,12 +13,12 @@ import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 
 /**
- * Redis 自动配置：仅当类路径存在 {@code JedisPool} 与 {@code RedisAtRepository} 时生效，
- * 提供 Redis 存储仓库、全局锁、分支仓库以及 Redis 侧清理调度，
- * 支撑 {@code storage=redis}（全 Redis）与 {@code storage=hybrid}（全局状态在 Redis、undo 在业务库）两种模式。
+ * Redis 自动配置：仅当类路径存在 {@code JedisPool} 与 {@code RedisAtRepository} 时生效， 提供 Redis 存储仓库、全局锁、分支仓库以及
+ * Redis 侧清理调度， 支撑 {@code storage=redis}（全 Redis）与 {@code storage=hybrid}（全局状态在 Redis、undo
+ * 在业务库）两种模式。
  *
- * <p>{@code @AutoConfiguration(after = EasyAtAutoConfiguration.class)} 保证在主自动配置之后加载，
- * 从而复用已装配好的 {@link UndoDataCodec} 等 Bean。
+ * <p>{@code @AutoConfiguration(after = EasyAtAutoConfiguration.class)} 保证在主自动配置之后加载， 从而复用已装配好的
+ * {@link UndoDataCodec} 等 Bean。
  */
 @AutoConfiguration(after = EasyAtAutoConfiguration.class)
 @ConditionalOnClass(
@@ -30,8 +30,7 @@ public class EasyAtRedisAutoConfiguration {
 
     /** storage=redis（全 Redis）或 hybrid（全局状态在 Redis、undo 在业务库）都需要连接池。 */
     /**
-     * Jedis 连接池：供 Redis 存储仓库、全局锁、分支仓库复用。
-     * storage=redis / hybrid 或 lock=redis 三种情况任一命中即需要连接池。
+     * Jedis 连接池：供 Redis 存储仓库、全局锁、分支仓库复用。 storage=redis / hybrid 或 lock=redis 三种情况任一命中即需要连接池。
      *
      * @param props easy-at 配置（取 Redis 连接参数）
      * @return Jedis 连接池
@@ -55,12 +54,12 @@ public class EasyAtRedisAutoConfiguration {
     }
 
     /**
-     * Redis 全局事务仓库：全局事务/分支/锁全部存 Redis（storage=redis 或 hybrid 时启用）。
-     * 设最小 1s 的 TTL，保证即使进程崩溃未清理，Redis 侧记录也能到期自动回收。
+     * Redis 全局事务仓库：全局事务/分支/锁全部存 Redis（storage=redis 或 hybrid 时启用）。 设最小 1s 的 TTL，保证即使进程崩溃未清理，Redis
+     * 侧记录也能到期自动回收。
      *
-     * @param pool   Jedis 连接池
-     * @param codec  undo 数据编解码器
-     * @param props  easy-at 配置（取 Redis TTL）
+     * @param pool Jedis 连接池
+     * @param codec undo 数据编解码器
+     * @param props easy-at 配置（取 Redis TTL）
      * @return Redis 存储仓库
      */
     @Bean
@@ -75,7 +74,7 @@ public class EasyAtRedisAutoConfiguration {
     /**
      * Redis 全局锁管理器（lock.type=redis 时启用）：分布式全局锁记录存 Redis。
      *
-     * @param pool  Jedis 连接池
+     * @param pool Jedis 连接池
      * @param props easy-at 配置（取锁租约与等待超时）
      * @return Redis 全局锁管理器
      */

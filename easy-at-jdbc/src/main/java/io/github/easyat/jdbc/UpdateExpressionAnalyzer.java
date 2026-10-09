@@ -34,12 +34,11 @@ final class UpdateExpressionAnalyzer {
     /**
      * 统计赋值表达式里的 JDBC 占位符个数；不支持的表达式返回 {@code -1}。
      *
-     * <p>递归下降识别：占位符=1，字面量/同列引用=0，括号/正负号透传，算术按左右子树求和，
-     * 时间关键字与函数按方言放行，其余一律 {@code -1}（交给通用快照路径）。
+     * <p>递归下降识别：占位符=1，字面量/同列引用=0，括号/正负号透传，算术按左右子树求和， 时间关键字与函数按方言放行，其余一律 {@code -1}（交给通用快照路径）。
      *
-     * @param target   被赋值的列（用于判断「同列自引用」是否安全）
+     * @param target 被赋值的列（用于判断「同列自引用」是否安全）
      * @param expression SET 右侧的表达式
-     * @param dialect   当前方言（决定哪些函数/关键字可用）
+     * @param dialect 当前方言（决定哪些函数/关键字可用）
      * @return 占位符个数，或 {@code -1}（不支持）
      */
     static int parameterCount(Column target, Expression expression, AtSqlDialect dialect) {

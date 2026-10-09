@@ -78,9 +78,7 @@ public final class AtRecoveryScheduler implements AutoCloseable {
                         });
     }
 
-    /**
-     * 启动定时恢复。仅在尚未启动（{@code task == null}）时注册固定延迟任务，重复调用幂等。
-     */
+    /** 启动定时恢复。仅在尚未启动（{@code task == null}）时注册固定延迟任务，重复调用幂等。 */
     public synchronized void start() {
         if (task == null)
             task =
@@ -91,17 +89,12 @@ public final class AtRecoveryScheduler implements AutoCloseable {
                             TimeUnit.MILLISECONDS);
     }
 
-    /**
-     * 立即触发一次恢复（不经过定时调度），常用于运维手动触发或测试。
-     */
+    /** 立即触发一次恢复（不经过定时调度），常用于运维手动触发或测试。 */
     public void recoverNow() {
         recoverSafely();
     }
 
-    /**
-     * 单次恢复扫描：拉取可恢复事务 → 抢租约 → 推进本地状态 → 驱动跨服务分支，
-     * 全程吞掉存储临时不可用的异常，保证下一次扫描仍能继续。
-     */
+    /** 单次恢复扫描：拉取可恢复事务 → 抢租约 → 推进本地状态 → 驱动跨服务分支， 全程吞掉存储临时不可用的异常，保证下一次扫描仍能继续。 */
     private void recoverSafely() {
         try {
             long now = System.currentTimeMillis();
@@ -161,9 +154,7 @@ public final class AtRecoveryScheduler implements AutoCloseable {
         }
     }
 
-    /**
-     * 关闭恢复调度器：取消任务并立即关闭线程池。实现 {@link AutoCloseable}。
-     */
+    /** 关闭恢复调度器：取消任务并立即关闭线程池。实现 {@link AutoCloseable}。 */
     @Override
     public synchronized void close() {
         if (task != null) task.cancel(false);

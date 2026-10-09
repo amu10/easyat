@@ -27,8 +27,7 @@ public final class CoordinationService {
     }
 
     /**
-     * 处理分支注册请求。先鉴权，再校验必填参数（xid、resourceId），最后委托协调器注册。
-     * 防悬挂命中（资源已回滚）时返回 409。
+     * 处理分支注册请求。先鉴权，再校验必填参数（xid、resourceId），最后委托协调器注册。 防悬挂命中（资源已回滚）时返回 409。
      *
      * @param headers 请求头（含鉴权信息）
      * @param body 请求体（xid / resourceId / service / callbackUrl）
@@ -70,8 +69,7 @@ public final class CoordinationService {
      * the receiving side can perform an empty rollback when the branch row does not exist yet.
      */
     /**
-     * 处理分支回滚请求。先鉴权，再带上 xid（来自头）与 resourceId（来自体）委托协调器回滚，
-     * 以便分支缺失时仍能完成空回滚。
+     * 处理分支回滚请求。先鉴权，再带上 xid（来自头）与 resourceId（来自体）委托协调器回滚， 以便分支缺失时仍能完成空回滚。
      *
      * @param headers 请求头（含鉴权信息与 XID）
      * @param branchId 分支 id

@@ -118,7 +118,9 @@ public final class ReconciliationCli {
             this.loginTimeout = seconds;
         }
 
-        /** @return 登录超时秒数。 */
+        /**
+         * @return 登录超时秒数。
+         */
         public int getLoginTimeout() throws SQLException {
             return loginTimeout;
         }

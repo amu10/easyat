@@ -7,8 +7,7 @@ import net.sf.jsqlparser.statement.delete.Delete;
  * DELETE 识别器（严格主键路径）：要求 {@code WHERE 主键 = ?} 或 {@code 主键 IN (?,...,?)}。
  *
  * <p>严格路径靠参数直接反推「会被删哪些行」，因此不需要先 SELECT 快照、也不需要理解 WHERE 的复杂逻辑；
- * 任何会让受影响行集不确定的语法（JOIN、USING、LIMIT、ORDER BY、WITH、多表）一律拒绝，
- * 让调用方退回通用快照路径。
+ * 任何会让受影响行集不确定的语法（JOIN、USING、LIMIT、ORDER BY、WITH、多表）一律拒绝， 让调用方退回通用快照路径。
  */
 final class DeleteRecognizer implements AtSqlRecognizer<Delete, DeleteRecognizer.Plan> {
     /** 单条语句影响行数上限（主键 IN 的大小上限），超出即拒绝生成 undo。 */
@@ -25,11 +24,11 @@ final class DeleteRecognizer implements AtSqlRecognizer<Delete, DeleteRecognizer
     /**
      * 解析并校验一条 DELETE 语句，返回严格主键路径的执行计划。
      *
-     * <p>会拒绝所有「影响行集不确定」的语法（WITH / 多表 / USING / JOIN / LIMIT / ORDER BY）。
-     * 只接受 {@code WHERE 主键 = ?}（或 {@code 主键 IN (...)}，且 IN 大小在 maxAffectedRows 内）。
+     * <p>会拒绝所有「影响行集不确定」的语法（WITH / 多表 / USING / JOIN / LIMIT / ORDER BY）。 只接受 {@code WHERE 主键 = ?}（或
+     * {@code 主键 IN (...)}，且 IN 大小在 maxAffectedRows 内）。
      *
-     * @param delete   JSqlParser 解析出的 DELETE 语句
-     * @param dialect  当前方言（用于拼加引号的表引用）
+     * @param delete JSqlParser 解析出的 DELETE 语句
+     * @param dialect 当前方言（用于拼加引号的表引用）
      * @return 严格主键路径的 Plan
      */
     @Override

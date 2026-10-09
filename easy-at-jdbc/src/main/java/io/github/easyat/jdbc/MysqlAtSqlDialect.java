@@ -53,15 +53,15 @@ public final class MysqlAtSqlDialect implements AtSqlDialect {
                             "USE",
                             "SHOW"));
 
-    /** @return 方言产品名 {@code MySQL}。 */
+    /**
+     * @return 方言产品名 {@code MySQL}。
+     */
     @Override
     public String productName() {
         return "MySQL";
     }
 
-    /**
-     * 用反引号引用标识符。已加反引号的原样返回；标识符内部的反引号按 MySQL 规则双写转义。
-     */
+    /** 用反引号引用标识符。已加反引号的原样返回；标识符内部的反引号按 MySQL 规则双写转义。 */
     @Override
     public String quoteIdentifier(String id) {
         if (id == null) return null;

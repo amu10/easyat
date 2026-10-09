@@ -6,8 +6,7 @@ import java.util.UUID;
 /**
  * undo 记录构造器：在 AT 上下文里便捷地创建一条 UndoRecord。
  *
- * <p>自动从当前线程的 AT 上下文取 xid，并生成随机 undo id；无活动事务时直接抛错。
- * 主要用于非自动（手动）场景或测试里手动拼 undo。
+ * <p>自动从当前线程的 AT 上下文取 xid，并生成随机 undo id；无活动事务时直接抛错。 主要用于非自动（手动）场景或测试里手动拼 undo。
  */
 public final class UndoLogBuilder {
     private UndoLogBuilder() {}
@@ -15,12 +14,12 @@ public final class UndoLogBuilder {
     /**
      * 构造一条绑定当前 xid 的 undo 记录。
      *
-     * @param resource    资源 id（通常是数据源标识）
-     * @param table       目标表名
-     * @param pk          主键列名
-     * @param value       主键值
+     * @param resource 资源 id（通常是数据源标识）
+     * @param table 目标表名
+     * @param pk 主键列名
+     * @param value 主键值
      * @param rollbackSql 反向 SQL（delete/update/insert）
-     * @param parameters  反向 SQL 的 JDBC 参数
+     * @param parameters 反向 SQL 的 JDBC 参数
      * @return 已绑定 xid 与随机 id 的 UndoRecord
      */
     public static UndoRecord of(

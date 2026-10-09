@@ -14,9 +14,8 @@ import net.sf.jsqlparser.schema.Table;
 /**
  * 识别器共用的工具类：负责「主键谓词解析、表名提取、参数计数、字面量还原、引用去除、拒绝/不支持抛错」。
  *
- * <p>所有 DML 识别器（INSERT/UPDATE/DELETE/通用快照）都依赖这里，避免在各自代码里重复 SQL 解析假设。
- * 关键不变量：任何「无法安全生成 undo」的语句都在此抛 {@link UnsupportedAtSqlException}，
- * 让上层决定是拒绝还是退回通用快照路径。
+ * <p>所有 DML 识别器（INSERT/UPDATE/DELETE/通用快照）都依赖这里，避免在各自代码里重复 SQL 解析假设。 关键不变量：任何「无法安全生成 undo」的语句都在此抛
+ * {@link UnsupportedAtSqlException}， 让上层决定是拒绝还是退回通用快照路径。
  */
 final class RecognizerSupport {
     private RecognizerSupport() {}
@@ -24,13 +23,12 @@ final class RecognizerSupport {
     /**
      * 从 WHERE 表达式里解析「主键精确条件」。
      *
-     * <p>只接受两种安全形态：{@code 主键 = ?}（参数个数为 1），或 {@code 主键 IN (?,...,?)}
-     * （且元素全为 {@code ?}、个数在 maxRows 内）。其它任何形态（范围、NOT IN、子查询、多列）都拒绝，
-     * 因为严格路径必须能枚举出「会被改/删的每一行主键」才能逐行生成 undo。
+     * <p>只接受两种安全形态：{@code 主键 = ?}（参数个数为 1），或 {@code 主键 IN (?,...,?)} （且元素全为 {@code ?}、个数在 maxRows
+     * 内）。其它任何形态（范围、NOT IN、子查询、多列）都拒绝， 因为严格路径必须能枚举出「会被改/删的每一行主键」才能逐行生成 undo。
      *
      * @param expression WHERE 子句表达式
-     * @param sql        原始 SQL（用于报错信息）
-     * @param maxRows    主键 IN 的大小上限
+     * @param sql 原始 SQL（用于报错信息）
+     * @param maxRows 主键 IN 的大小上限
      * @return 含命中主键列名与参数个数的 PredicatePlan
      */
     static PredicatePlan primaryKeyPredicate(Expression expression, String sql, int maxRows) {

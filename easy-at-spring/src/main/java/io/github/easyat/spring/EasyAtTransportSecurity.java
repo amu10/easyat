@@ -28,8 +28,7 @@ public final class EasyAtTransportSecurity {
     }
 
     /**
-     * 校验一组跨服务请求头是否合法（HMAC 签名 + 截止时间 + 来源）。
-     * 未配置密钥时：dev 模式放行、生产模式拒绝。校验失败（缺头、签名不匹配、截止时间非法）返回 false。
+     * 校验一组跨服务请求头是否合法（HMAC 签名 + 截止时间 + 来源）。 未配置密钥时：dev 模式放行、生产模式拒绝。校验失败（缺头、签名不匹配、截止时间非法）返回 false。
      *
      * @param headers 请求头映射
      * @return 是否通过鉴权

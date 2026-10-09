@@ -26,14 +26,13 @@ final class GenericAtExecutor {
     /**
      * 通用快照路径的执行入口。
      *
-     * <p>先查单列主键、拒绝「改主键」的 SET（否则 undo 无法定位行），再按快照 SELECT 读出所有受影响行
-     * （超出 {@code plan.maxRows} 即拒），逐行抢锁并生成整行级 undo，最后随业务 DML 同连接落库。
-     * 中途失败则整体 abort（释放已占锁、删除已写 undo）。
+     * <p>先查单列主键、拒绝「改主键」的 SET（否则 undo 无法定位行），再按快照 SELECT 读出所有受影响行 （超出 {@code plan.maxRows}
+     * 即拒），逐行抢锁并生成整行级 undo，最后随业务 DML 同连接落库。 中途失败则整体 abort（释放已占锁、删除已写 undo）。
      *
-     * @param context    undo 生成上下文
+     * @param context undo 生成上下文
      * @param connection 业务连接
-     * @param xid        全局事务 id
-     * @param plan       通用快照计划
+     * @param xid 全局事务 id
+     * @param plan 通用快照计划
      * @param parameters 业务语句的 JDBC 参数
      * @return 单行时返回单个 Capture，多行时返回合并后的 Capture
      * @throws SQLException 数据库访问异常
@@ -80,15 +79,14 @@ final class GenericAtExecutor {
     /**
      * 单行处理：抢锁 → 拼整行级反向 SQL（DELETE 插回 / UPDATE 还原）→ 落库。
      *
-     * <p>整行还原是本路径唯一不依赖「猜哪些列被改」的做法：UPDATE 把除主键外的全部列改回 before image，
-     * DELETE 则把整行按 before image 插回。
+     * <p>整行还原是本路径唯一不依赖「猜哪些列被改」的做法：UPDATE 把除主键外的全部列改回 before image， DELETE 则把整行按 before image 插回。
      *
-     * @param context    undo 生成上下文
+     * @param context undo 生成上下文
      * @param connection 业务连接
-     * @param xid        全局事务 id
-     * @param plan       通用快照计划
+     * @param xid 全局事务 id
+     * @param plan 通用快照计划
      * @param primaryKey 目标表的单列主键列名
-     * @param before     快照得到的 before image
+     * @param before 快照得到的 before image
      * @return 单行 Capture
      * @throws SQLException 数据库访问异常
      */

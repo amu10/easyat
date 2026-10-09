@@ -10,10 +10,8 @@ import net.sf.jsqlparser.statement.update.UpdateSet;
 /**
  * UPDATE 识别器（严格主键路径）：要求 {@code WHERE 主键 = ?} 或 {@code 主键 IN (?,...,?)}。
  *
- * <p>严格路径靠参数直接反推「会改哪些行」，且 SET 右侧必须是「参数 / 标量字面量 / 白名单函数 /
- * 同列算术」，可由 {@link UpdateExpressionAnalyzer} 静态校验（无需先 SELECT）。
- * 任何会让受影响行集不确定或值算不出的语法（FROM/JOIN/LIMIT/ORDER BY/WITH、子查询赋值等）一律拒绝，
- * 让调用方退回通用快照路径。
+ * <p>严格路径靠参数直接反推「会改哪些行」，且 SET 右侧必须是「参数 / 标量字面量 / 白名单函数 / 同列算术」，可由 {@link UpdateExpressionAnalyzer}
+ * 静态校验（无需先 SELECT）。 任何会让受影响行集不确定或值算不出的语法（FROM/JOIN/LIMIT/ORDER BY/WITH、子查询赋值等）一律拒绝， 让调用方退回通用快照路径。
  */
 final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer.Plan> {
     /** 单条语句影响行数上限（主键 IN 的大小上限），超出即拒绝生成 undo。 */
@@ -30,10 +28,10 @@ final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer
     /**
      * 解析并校验一条 UPDATE 语句，返回严格主键路径的执行计划。
      *
-     * <p>拒绝 FROM/JOIN/LIMIT/ORDER BY/WITH；每个 SET 必须是单列单列赋值且右侧可被
-     * {@link UpdateExpressionAnalyzer} 接受；只接受 {@code WHERE 主键 = ?}（或 {@code 主键 IN}）。
+     * <p>拒绝 FROM/JOIN/LIMIT/ORDER BY/WITH；每个 SET 必须是单列单列赋值且右侧可被 {@link UpdateExpressionAnalyzer}
+     * 接受；只接受 {@code WHERE 主键 = ?}（或 {@code 主键 IN}）。
      *
-     * @param update  JSqlParser 解析出的 UPDATE 语句
+     * @param update JSqlParser 解析出的 UPDATE 语句
      * @param dialect 当前方言（用于拼加引号的表引用）
      * @return 严格主键路径的 Plan
      */

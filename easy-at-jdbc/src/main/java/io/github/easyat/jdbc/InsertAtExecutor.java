@@ -16,15 +16,14 @@ final class InsertAtExecutor implements AtStatementExecutor<InsertRecognizer.Pla
     /**
      * 收集 INSERT 每行的主键值并执行。
      *
-     * <p>逐行走一遍 VALUES，推进「下一个 ? 的下标」——因为字面量不消耗占位符，不能用简单的行号×列数。
-     * 主键既可能是 {@code ?} 也可能是字面量（用 RecognizerSupport.literal 还原）。拿到全部主键后排序，
-     * 逐行抢锁并生成「按主键 DELETE」的反向 SQL。
+     * <p>逐行走一遍 VALUES，推进「下一个 ? 的下标」——因为字面量不消耗占位符，不能用简单的行号×列数。 主键既可能是 {@code ?} 也可能是字面量（用
+     * RecognizerSupport.literal 还原）。拿到全部主键后排序， 逐行抢锁并生成「按主键 DELETE」的反向 SQL。
      *
-     * @param context     undo 生成上下文
-     * @param connection  业务连接
-     * @param xid         全局事务 id
-     * @param plan        已识别的 INSERT 计划
-     * @param parameters  业务语句的 JDBC 参数
+     * @param context undo 生成上下文
+     * @param connection 业务连接
+     * @param xid 全局事务 id
+     * @param plan 已识别的 INSERT 计划
+     * @param parameters 业务语句的 JDBC 参数
      * @return 单行时返回单个 Capture，多行时返回合并后的 Capture
      * @throws SQLException 数据库访问异常
      */
@@ -88,11 +87,11 @@ final class InsertAtExecutor implements AtStatementExecutor<InsertRecognizer.Pla
      *
      * <p>INSERT 的 before image 不存在（行还没插入），所以 undo 是 DELETE 而不是 UPDATE/INSERT。
      *
-     * @param context     undo 生成上下文
-     * @param connection  业务连接
-     * @param xid         全局事务 id
-     * @param plan        已识别的 INSERT 计划
-     * @param key         本行的主键值
+     * @param context undo 生成上下文
+     * @param connection 业务连接
+     * @param xid 全局事务 id
+     * @param plan 已识别的 INSERT 计划
+     * @param key 本行的主键值
      * @return 单行 Capture
      * @throws SQLException 数据库访问异常
      */

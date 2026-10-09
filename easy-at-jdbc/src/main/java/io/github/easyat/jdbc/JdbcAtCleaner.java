@@ -22,13 +22,12 @@ public final class JdbcAtCleaner {
     /**
      * 增量清理已终态（COMMITTED / ROLLED_BACK）的 JDBC 事务历史与过期全局锁。
      *
-     * <p>整批在一个本地事务里完成（先删 undo / branch，再删 global，再批量删过期锁），
-     * 任一步失败整体回滚，保证「不留下孤儿记录」。
+     * <p>整批在一个本地事务里完成（先删 undo / branch，再删 global，再批量删过期锁）， 任一步失败整体回滚，保证「不留下孤儿记录」。
      *
-     * @param committedBefore   清理 updatedAt 早于此时间戳的 COMMITTED 事务
-     * @param rolledBackBefore  清理 updatedAt 早于此时间戳的 ROLLED_BACK 事务
+     * @param committedBefore 清理 updatedAt 早于此时间戳的 COMMITTED 事务
+     * @param rolledBackBefore 清理 updatedAt 早于此时间戳的 ROLLED_BACK 事务
      * @param expiredLockBefore 清理 lease_until 早于此时间戳的过期锁
-     * @param batchSize         每批最多处理多少条（限流，防止单事务过大）
+     * @param batchSize 每批最多处理多少条（限流，防止单事务过大）
      * @return 本批次清理的条数统计
      */
     public CleanupResult cleanup(

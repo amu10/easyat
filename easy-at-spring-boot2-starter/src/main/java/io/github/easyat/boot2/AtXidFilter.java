@@ -10,17 +10,16 @@ import javax.servlet.http.*;
 /**
  * HTTP 过滤器：在跨服务调用场景下，通过 HTTP 请求头把 AT 全局事务 XID 传播到本应用。
  *
- * <p>当入站请求携带 XID 请求头、且本地当前线程尚未绑定任何事务时，本过滤器会调用
- * {@link AtTransactionManager#join(String)} 把该 XID 绑定到当前线程的 AT 上下文，
- * 使本次请求内的数据库操作自动加入同一个全局事务；请求处理完毕后（无论成功还是异常）
- * 统一清理，避免线程池复用导致的 XID「串号」。
+ * <p>当入站请求携带 XID 请求头、且本地当前线程尚未绑定任何事务时，本过滤器会调用 {@link AtTransactionManager#join(String)} 把该 XID
+ * 绑定到当前线程的 AT 上下文， 使本次请求内的数据库操作自动加入同一个全局事务；请求处理完毕后（无论成功还是异常） 统一清理，避免线程池复用导致的 XID「串号」。
  *
- * <p>若注入了 {@link EasyAtTransportSecurity} 且其 HMAC 签名已配置，则对所有「需要绑定 XID」
- * 的入站请求做签名校验，校验不通过直接返回 403，防止伪造 XID 注入引发的越权事务操作。
+ * <p>若注入了 {@link EasyAtTransportSecurity} 且其 HMAC 签名已配置，则对所有「需要绑定 XID」 的入站请求做签名校验，校验不通过直接返回
+ * 403，防止伪造 XID 注入引发的越权事务操作。
  */
 public final class AtXidFilter implements Filter {
     /** AT 事务管理器：负责把上游传来的 XID 加入（join）或清理当前线程的事务上下文。 */
     private final AtTransactionManager manager;
+
     /** 跨服务传输安全组件（HMAC 签名校验），可为 null——未配置签名时不鉴权。 */
     private final EasyAtTransportSecurity security;
 
@@ -38,10 +37,10 @@ public final class AtXidFilter implements Filter {
     /**
      * 每个 HTTP 请求的处理入口：解析 XID 头、按需做签名鉴权、绑定/清理事务上下文。
      *
-     * @param request  入站请求（强转为 {@link HttpServletRequest} 以读取 XID 头）
+     * @param request 入站请求（强转为 {@link HttpServletRequest} 以读取 XID 头）
      * @param response 出站响应（鉴权失败时写 403）
-     * @param chain    过滤器链，放行后续处理
-     * @throws IOException      读写异常时透传
+     * @param chain 过滤器链，放行后续处理
+     * @throws IOException 读写异常时透传
      * @throws ServletException 过滤器链处理异常时透传
      */
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)

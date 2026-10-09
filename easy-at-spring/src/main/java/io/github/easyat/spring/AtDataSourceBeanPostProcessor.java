@@ -49,8 +49,8 @@ public final class AtDataSourceBeanPostProcessor implements BeanPostProcessor {
     }
 
     /**
-     * 初始化后把符合条件的数据源包装成 easyAt 的 {@link AtDataSource} 代理。
-     * 跳过：非 DataSource、已是 AtDataSource、被排除列表命中的、以及显式禁用的资源。
+     * 初始化后把符合条件的数据源包装成 easyAt 的 {@link AtDataSource} 代理。 跳过：非 DataSource、已是
+     * AtDataSource、被排除列表命中的、以及显式禁用的资源。
      *
      * @param bean 已初始化的 Bean
      * @param beanName Bean 名称

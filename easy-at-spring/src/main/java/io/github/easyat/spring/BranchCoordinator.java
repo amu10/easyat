@@ -59,8 +59,7 @@ public final class BranchCoordinator {
     }
 
     /**
-     * 注册一个分支。对同一 (xid, resourceId) 幂等——已存在时直接返回既有分支 id。
-     * 若同一资源已被回滚过，则抛出 {@link AtException}（防悬挂）。
+     * 注册一个分支。对同一 (xid, resourceId) 幂等——已存在时直接返回既有分支 id。 若同一资源已被回滚过，则抛出 {@link AtException}（防悬挂）。
      *
      * @param xid 全局事务 id
      * @param resourceId 资源 id

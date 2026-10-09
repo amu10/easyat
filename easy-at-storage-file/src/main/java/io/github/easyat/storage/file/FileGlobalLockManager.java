@@ -12,12 +12,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * 基于文件系统（一个 lock 文件对应一把全局锁）的全局锁实现，<b>仅适用于单机部署</b>。
  *
- * <p>AT 模式的核心之一：在本地事务提交前，必须先对「资源 + 表 + 主键」这把全局锁加锁成功，
- * 才能提交；否则说明有别的全局事务正在改同一行，必须冲突重试。多机部署必须换成
- * Redis / JDBC 等能被所有节点共享的锁实现，否则各实例各自的文件锁互不感知，等于没加锁。
+ * <p>AT 模式的核心之一：在本地事务提交前，必须先对「资源 + 表 + 主键」这把全局锁加锁成功， 才能提交；否则说明有别的全局事务正在改同一行，必须冲突重试。多机部署必须换成 Redis /
+ * JDBC 等能被所有节点共享的锁实现，否则各实例各自的文件锁互不感知，等于没加锁。
  *
- * <p>锁的粒度是「一行」——文件名编码了 {@code resourceId_tableName_primaryKey}，所以两个事务
- * 改同一行会争用同一个 lock 文件；改不同行则互不影响。
+ * <p>锁的粒度是「一行」——文件名编码了 {@code resourceId_tableName_primaryKey}，所以两个事务 改同一行会争用同一个 lock 文件；改不同行则互不影响。
  */
 public final class FileGlobalLockManager implements GlobalLockManager {
     /** 存放所有 {@code *.lock} 文件的目录（构造时归一化为绝对路径）。 */
@@ -68,14 +66,15 @@ public final class FileGlobalLockManager implements GlobalLockManager {
     /**
      * 获取「资源 + 表 + 主键」这一行的全局锁。
      *
-     * <p>实现方式：以 {@code CREATE_NEW} 方式创建 lock 文件，文件内容就是持有者 xid。
-     * 若文件已存在则抛出 {@link FileAlreadyExistsException}，此时再读文件内容：
+     * <p>实现方式：以 {@code CREATE_NEW} 方式创建 lock 文件，文件内容就是持有者 xid。 若文件已存在则抛出 {@link
+     * FileAlreadyExistsException}，此时再读文件内容：
+     *
      * <ul>
-     *   <li>若内容就是本事务自己的 xid，说明是可重入，直接返回成功；</li>
-     *   <li>若是别的事务，则按 {@code waitMillis} 退避重试，直到超时抛出 {@link GlobalLockConflictException}。</li>
+     *   <li>若内容就是本事务自己的 xid，说明是可重入，直接返回成功；
+     *   <li>若是别的事务，则按 {@code waitMillis} 退避重试，直到超时抛出 {@link GlobalLockConflictException}。
      * </ul>
-     * 用「建文件原子性」替代了真正的互斥原语，单机下足够；{@code CREATE_NEW} 在文件系统上是原子的，
-     * 天然避免了两个进程同时抢到锁的竞态。
+     *
+     * 用「建文件原子性」替代了真正的互斥原语，单机下足够；{@code CREATE_NEW} 在文件系统上是原子的， 天然避免了两个进程同时抢到锁的竞态。
      *
      * @param resourceId 资源标识
      * @param tableName 表名
@@ -146,8 +145,7 @@ public final class FileGlobalLockManager implements GlobalLockManager {
     }
 
     /**
-     * 把「资源 + 表 + 主键」编码成 lock 文件路径。三段都先经过 {@link #safe} 转义，
-     * 保证文件名里不会出现会破坏路径结构的字符。
+     * 把「资源 + 表 + 主键」编码成 lock 文件路径。三段都先经过 {@link #safe} 转义， 保证文件名里不会出现会破坏路径结构的字符。
      *
      * @param resource 资源标识
      * @param table 表名
@@ -159,8 +157,7 @@ public final class FileGlobalLockManager implements GlobalLockManager {
     }
 
     /**
-     * 文件名安全化：把除字母、数字、{@code . _ -} 之外的字符替换为下划线，
-     * 防止表名 / 主键值里含有 {@code /} 或 {@code ..} 造成路径穿越。
+     * 文件名安全化：把除字母、数字、{@code . _ -} 之外的字符替换为下划线， 防止表名 / 主键值里含有 {@code /} 或 {@code ..} 造成路径穿越。
      *
      * @param value 原始字符串
      * @return 仅含安全字符的字符串

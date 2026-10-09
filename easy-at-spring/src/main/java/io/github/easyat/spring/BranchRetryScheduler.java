@@ -67,9 +67,7 @@ public final class BranchRetryScheduler implements AutoCloseable {
                         });
     }
 
-    /**
-     * 启动定时重试。仅在尚未启动（{@code task == null}）时注册固定延迟任务，重复调用幂等。
-     */
+    /** 启动定时重试。仅在尚未启动（{@code task == null}）时注册固定延迟任务，重复调用幂等。 */
     public synchronized void start() {
         if (task == null)
             task =
@@ -86,8 +84,7 @@ public final class BranchRetryScheduler implements AutoCloseable {
     }
 
     /**
-     * 单次重试扫描：拉取已到点且未终结的分支；重试耗尽则收敛到 {@code MANUAL_INTERVENTION}，
-     * 否则重新驱动回滚并刷新退避后的下一次重试点。存储临时不可用时吞掉异常。
+     * 单次重试扫描：拉取已到点且未终结的分支；重试耗尽则收敛到 {@code MANUAL_INTERVENTION}， 否则重新驱动回滚并刷新退避后的下一次重试点。存储临时不可用时吞掉异常。
      */
     private void retryPending() {
         try {
@@ -133,9 +130,7 @@ public final class BranchRetryScheduler implements AutoCloseable {
         return Math.min(300000L, 1000L << Math.min(retries, 8));
     }
 
-    /**
-     * 关闭重试调度器：取消任务并立即关闭线程池。实现 {@link AutoCloseable}。
-     */
+    /** 关闭重试调度器：取消任务并立即关闭线程池。实现 {@link AutoCloseable}。 */
     @Override
     public synchronized void close() {
         if (task != null) task.cancel(false);

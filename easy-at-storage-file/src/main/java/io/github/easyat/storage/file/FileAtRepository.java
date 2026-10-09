@@ -9,12 +9,11 @@ import java.util.concurrent.locks.*;
 /**
  * 基于本地文件系统的全局事务（AT）仓储实现，把每一笔全局事务序列化成一个 {@code <xid>.at} 文件。
  *
- * <p>这是为<b>单机 / 开发 / 演示</b>场景准备的简易存储：所有状态都在进程所在机器的磁盘上，
- * 不具备跨进程（多实例）一致性。生产环境应当使用 Redis / JDBC 等共享存储。
+ * <p>这是为<b>单机 / 开发 / 演示</b>场景准备的简易存储：所有状态都在进程所在机器的磁盘上， 不具备跨进程（多实例）一致性。生产环境应当使用 Redis / JDBC 等共享存储。
  *
- * <p>并发安全由一把 {@link ReentrantReadWriteLock} 保证：读操作（{@link #find}、{@link #recoverable}、
- * {@link #findByStatus}）走读锁；会改写状态的操作（{@link #create}、{@link #save}、{@link #transition}、
- * {@link #claimLease}、{@link #releaseLease}、{@link #updateRecovery}）走写锁。
+ * <p>并发安全由一把 {@link ReentrantReadWriteLock} 保证：读操作（{@link #find}、{@link #recoverable}、 {@link
+ * #findByStatus}）走读锁；会改写状态的操作（{@link #create}、{@link #save}、{@link #transition}、 {@link
+ * #claimLease}、{@link #releaseLease}、{@link #updateRecovery}）走写锁。
  * 这种粗粒度锁对单机文件存储足够，因为同一个文件系统上没有必要做更细的并发拆分。
  */
 public final class FileAtRepository implements AtRepository {
@@ -42,8 +41,8 @@ public final class FileAtRepository implements AtRepository {
     /**
      * 创建一笔全新的全局事务记录（首次落盘）。
      *
-     * <p>若同 xid 的 {@code .at} 文件已存在会抛 {@link AtException}，因为全局事务创建应当是幂等安全的，
-     * 重复创建意味着上游重试逻辑出错或 xid 复用。
+     * <p>若同 xid 的 {@code .at} 文件已存在会抛 {@link AtException}，因为全局事务创建应当是幂等安全的， 重复创建意味着上游重试逻辑出错或 xid
+     * 复用。
      *
      * @param tx 待创建的全局事务对象
      * @throws AtException 当 xid 已存在或序列化 / 落盘失败时抛出
@@ -101,12 +100,14 @@ public final class FileAtRepository implements AtRepository {
      * 扫描出<b>此刻需要被恢复调度推进</b>的全局事务集合，供后台恢复线程批量处理。
      *
      * <p>判定规则（满足其一即纳入）：
+     *
      * <ul>
-     *   <li>{@code ACTIVE} 且已超过 {@code deadline}（悬挂事务，发起方可能已崩溃）；</li>
-     *   <li>{@code ROLLING_BACK}（回滚尚未完成，需继续补偿）；</li>
-     *   <li>{@code COMMITTING}（本地已提交但全局未收敛，必须继续推进，否则永久残留）；</li>
-     *   <li>{@code ROLLBACK_FAILED}（回滚中途失败，需重试）。</li>
+     *   <li>{@code ACTIVE} 且已超过 {@code deadline}（悬挂事务，发起方可能已崩溃）；
+     *   <li>{@code ROLLING_BACK}（回滚尚未完成，需继续补偿）；
+     *   <li>{@code COMMITTING}（本地已提交但全局未收敛，必须继续推进，否则永久残留）；
+     *   <li>{@code ROLLBACK_FAILED}（回滚中途失败，需重试）。
      * </ul>
+     *
      * 同时要求 {@code nextRetryAt <= now}，即到达了下一次重试时间点，避免对未到时的事务频繁打扰。
      *
      * @param now 当前时间戳（毫秒）
@@ -135,11 +136,10 @@ public final class FileAtRepository implements AtRepository {
     }
 
     /**
-     * 在<b>乐观锁</b>前提下推进全局事务的状态机：只有当当前状态等于 {@code expected}、且版本号等于
-     * {@code expectedVersion} 时，才应用 {@code next} 状态并落盘。
+     * 在<b>乐观锁</b>前提下推进全局事务的状态机：只有当当前状态等于 {@code expected}、且版本号等于 {@code expectedVersion} 时，才应用
+     * {@code next} 状态并落盘。
      *
-     * <p>用「状态 + 版本号」双重校验来避免恢复线程与正常提交线程并发修改同一事务时的竞态：
-     * 谁先写成功，另一方的版本号或状态就失配而返回 {@code false}，需重新读取后再决策。
+     * <p>用「状态 + 版本号」双重校验来避免恢复线程与正常提交线程并发修改同一事务时的竞态： 谁先写成功，另一方的版本号或状态就失配而返回 {@code false}，需重新读取后再决策。
      *
      * @param xid 全局事务标识
      * @param expected 期望的当前状态
@@ -164,9 +164,8 @@ public final class FileAtRepository implements AtRepository {
     /**
      * 抢占（认领）一笔事务的恢复租约，确保同一时刻只有一个恢复节点在处理它。
      *
-     * <p>认领成功的三种情况：事务尚无 owner、owner 正是自己（可续租）、或上一任 owner 的租约已过期
-     * （{@code leaseUntil < now}）。认领后把 owner 与新的 {@code leaseUntil} 写回文件。已处于终态
-     * （{@code isTerminal()}）的事务不再可被认领，因为终态不需要再恢复。
+     * <p>认领成功的三种情况：事务尚无 owner、owner 正是自己（可续租）、或上一任 owner 的租约已过期 （{@code leaseUntil < now}）。认领后把
+     * owner 与新的 {@code leaseUntil} 写回文件。已处于终态 （{@code isTerminal()}）的事务不再可被认领，因为终态不需要再恢复。
      *
      * @param xid 全局事务标识
      * @param owner 当前恢复节点的标识
@@ -259,12 +258,10 @@ public final class FileAtRepository implements AtRepository {
     }
 
     /**
-     * 把事务对象原子地写到磁盘：先写同名 {@code .tmp} 临时文件，刷盘并 {@code fsync} 后，
-     * 再用「替换式」{@code Files.move} 覆盖正式文件。
+     * 把事务对象原子地写到磁盘：先写同名 {@code .tmp} 临时文件，刷盘并 {@code fsync} 后， 再用「替换式」{@code Files.move} 覆盖正式文件。
      *
-     * <p>这样即使进程在写的过程中崩溃，正式的 {@code .at} 文件要么还是旧内容、要么完整新内容，
-     * 不会出现半截文件导致反序列化失败。{@code f.getFD().sync()} 强制把数据刷到物理磁盘，
-     * 而不只是操作系统缓存，进一步降低崩溃丢数据的概率。
+     * <p>这样即使进程在写的过程中崩溃，正式的 {@code .at} 文件要么还是旧内容、要么完整新内容， 不会出现半截文件导致反序列化失败。{@code
+     * f.getFD().sync()} 强制把数据刷到物理磁盘， 而不只是操作系统缓存，进一步降低崩溃丢数据的概率。
      *
      * @param tx 要持久化的事务对象
      * @throws AtException 当临时文件写入 / 刷盘 / 移动失败时抛出
@@ -285,8 +282,8 @@ public final class FileAtRepository implements AtRepository {
     }
 
     /**
-     * 把 xid 映射成磁盘上的 {@code <xid>.at} 文件路径，并先做一层安全校验：
-     * xid 只能由字母、数字与连字符组成，防止路径穿越（如包含 {@code ../}）破坏目录结构。
+     * 把 xid 映射成磁盘上的 {@code <xid>.at} 文件路径，并先做一层安全校验： xid 只能由字母、数字与连字符组成，防止路径穿越（如包含 {@code
+     * ../}）破坏目录结构。
      *
      * @param xid 全局事务标识
      * @return 该事务对应的绝对文件路径

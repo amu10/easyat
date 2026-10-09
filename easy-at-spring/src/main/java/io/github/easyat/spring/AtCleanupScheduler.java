@@ -64,9 +64,7 @@ public final class AtCleanupScheduler implements AutoCloseable {
                         });
     }
 
-    /**
-     * 启动定时清理。仅在尚未启动（{@code task == null}）时注册一个固定延迟任务， 保证重复调用是幂等的。
-     */
+    /** 启动定时清理。仅在尚未启动（{@code task == null}）时注册一个固定延迟任务， 保证重复调用是幂等的。 */
     public synchronized void start() {
         if (task == null)
             task =
@@ -99,10 +97,7 @@ public final class AtCleanupScheduler implements AutoCloseable {
         }
     }
 
-    /**
-     * 关闭调度器：取消已注册任务并立即关闭线程池（{@code shutdownNow}）。
-     * 实现 {@link AutoCloseable}，便于在 Spring 销毁时释放资源。
-     */
+    /** 关闭调度器：取消已注册任务并立即关闭线程池（{@code shutdownNow}）。 实现 {@link AutoCloseable}，便于在 Spring 销毁时释放资源。 */
     @Override
     public synchronized void close() {
         if (task != null) task.cancel(false);

@@ -53,15 +53,15 @@ public final class PostgresAtSqlDialect implements AtSqlDialect {
                             "USER",
                             "SHOW"));
 
-    /** @return 方言产品名 {@code PostgreSQL}。 */
+    /**
+     * @return 方言产品名 {@code PostgreSQL}。
+     */
     @Override
     public String productName() {
         return "PostgreSQL";
     }
 
-    /**
-     * 用双引号引用标识符。已加双引号的原样返回；标识符内部的双引号按 SQL 标准双写转义。
-     */
+    /** 用双引号引用标识符。已加双引号的原样返回；标识符内部的双引号按 SQL 标准双写转义。 */
     @Override
     public String quoteIdentifier(String id) {
         if (id == null) return null;

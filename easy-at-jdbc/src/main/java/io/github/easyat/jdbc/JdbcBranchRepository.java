@@ -187,8 +187,7 @@ public final class JdbcBranchRepository implements BranchRepository {
     }
 
     /**
-     * 扫描待恢复的分支：处于 ROLLING_BACK / ROLLBACK_FAILED 且已过重试时间（或从未排期）的，
-     * 按 sequence 排序，最多取 limit 条交给恢复调度。
+     * 扫描待恢复的分支：处于 ROLLING_BACK / ROLLBACK_FAILED 且已过重试时间（或从未排期）的， 按 sequence 排序，最多取 limit 条交给恢复调度。
      */
     @Override
     public List<AtBranch> pendingActions(long now, int limit) {

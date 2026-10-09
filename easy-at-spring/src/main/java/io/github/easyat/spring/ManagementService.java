@@ -75,7 +75,9 @@ public final class ManagementService {
         return reconciliation.report().toMap();
     }
 
-    /** @return 管理端点是否启用。 */
+    /**
+     * @return 管理端点是否启用。
+     */
     public boolean isEnabled() {
         return enabled;
     }
@@ -141,7 +143,9 @@ public final class ManagementService {
         return toMap(required(xid));
     }
 
-    /** @return 全部人工操作审计记录的快照。 */
+    /**
+     * @return 全部人工操作审计记录的快照。
+     */
     public List<AuditEntry> audit() {
         return new ArrayList<AuditEntry>(audit);
     }

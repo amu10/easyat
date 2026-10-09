@@ -1,11 +1,10 @@
 package io.github.easyat.jdbc;
 
-/**
- * 兜底方言：不做任何引用（标识符原样返回）。仅在无法探测到数据库产品时使用，
- * 此时 AT 仍可用，但拼出的 SQL 在大小写敏感或含保留字的数据库上可能出错。
- */
+/** 兜底方言：不做任何引用（标识符原样返回）。仅在无法探测到数据库产品时使用， 此时 AT 仍可用，但拼出的 SQL 在大小写敏感或含保留字的数据库上可能出错。 */
 public final class GenericAtSqlDialect implements AtSqlDialect {
-    /** @return 方言产品名，固定为 {@code Generic}。 */
+    /**
+     * @return 方言产品名，固定为 {@code Generic}。
+     */
     @Override
     public String productName() {
         return "Generic";

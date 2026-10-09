@@ -39,11 +39,11 @@ public final class JacksonUndoDataCodec implements UndoDataCodec {
     /**
      * 把一行 before/after image 编码为带版本号的 JSON 字节。
      *
-     * <p>每个列值按类型感知方式编码（见 {@link #toNode}）；若配置了列级加密且列名非空，则密文以
-     * {@code {"@t":"enc",...}} 标签节点写入。null image 直接编码为 null。
+     * <p>每个列值按类型感知方式编码（见 {@link #toNode}）；若配置了列级加密且列名非空，则密文以 {@code {"@t":"enc",...}} 标签节点写入。null
+     * image 直接编码为 null。
      *
      * @param image 行镜像（列名 → 值）
-     * @param ctx   上下文（资源 id / 表名，用于加密与脱敏）
+     * @param ctx 上下文（资源 id / 表名，用于加密与脱敏）
      * @return JSON 字节，或 null（当 image 为 null）
      */
     @Override
@@ -61,7 +61,7 @@ public final class JacksonUndoDataCodec implements UndoDataCodec {
      * 把 JSON 字节解码回行镜像。同时兼容旧版 Java 原生序列化 blob（升级兼容）。
      *
      * @param data 编码后的字节
-     * @param ctx  上下文（资源 id / 表名，用于解密）
+     * @param ctx 上下文（资源 id / 表名，用于解密）
      * @return 行镜像，或 null（当 data 为 null）
      */
     @Override
@@ -88,7 +88,7 @@ public final class JacksonUndoDataCodec implements UndoDataCodec {
      * 把 undo 反向 SQL 的参数数组编码为带版本号的 JSON 字节数组节点。
      *
      * @param params 反向 SQL 的 JDBC 参数
-     * @param ctx    上下文（资源 id / 表名，用于加密）
+     * @param ctx 上下文（资源 id / 表名，用于加密）
      * @return JSON 字节，或 null（当 params 为 null）
      */
     @Override
@@ -105,7 +105,7 @@ public final class JacksonUndoDataCodec implements UndoDataCodec {
      * 把 JSON 字节解码回参数数组。兼容旧版 Java 原生序列化 blob（升级兼容）。
      *
      * @param data 编码后的字节
-     * @param ctx  上下文（资源 id / 表名，用于解密）
+     * @param ctx 上下文（资源 id / 表名，用于解密）
      * @return 参数数组，或 null（当 data 为 null）
      */
     @Override
