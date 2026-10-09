@@ -27,11 +27,22 @@ import org.springframework.web.client.RestTemplate;
  * </ul>
  */
 public final class BranchCoordinator {
+    /** 分支存储，负责分支的注册、查询、CAS 状态迁移与重试信息更新。 */
     private final BranchRepository branches;
+
+    /** 本地事务管理器，用于驱动本进程内分支的提交/回滚。 */
     private final AtTransactionManager manager;
+
+    /** 用于给跨服务回调请求头签名的 HMAC 签名器。 */
     private final HmacSigner signer;
+
+    /** 本服务名，写入回调请求 SOURCE 头。 */
     private final String appName;
+
+    /** 指标采集器（可为 null）。 */
     private final EasyAtMetrics metrics;
+
+    /** 用于向远程分支回调地址发送 commit/rollback 的 HTTP 客户端。 */
     private final RestTemplate rest = new RestTemplate();
 
     public BranchCoordinator(
@@ -47,7 +58,16 @@ public final class BranchCoordinator {
         this.metrics = metrics;
     }
 
-    /** Registers a branch. Idempotent per (xid, resourceId). */
+    /**
+     * 注册一个分支。对同一 (xid, resourceId) 幂等——已存在时直接返回既有分支 id。
+     * 若同一资源已被回滚过，则抛出 {@link AtException}（防悬挂）。
+     *
+     * @param xid 全局事务 id
+     * @param resourceId 资源 id
+     * @param serviceName 发起方服务名
+     * @param callbackUrl 远程回调地址；本地分支传 null
+     * @return 分支 id
+     */
     public synchronized String register(
             String xid, String resourceId, String serviceName, String callbackUrl) {
         Optional<AtBranch> existing = branches.findByXidResource(xid, resourceId);
@@ -70,18 +90,22 @@ public final class BranchCoordinator {
         return b.getBranchId();
     }
 
+    /** 驱动某全局事务下所有分支提交（本地只提交一次，远程逐个回调）。 */
     public void commit(String xid) {
         drive(xid, false);
     }
 
+    /** 驱动某全局事务下所有分支回滚（本地只回滚一次，远程逐个回调）。 */
     public void rollback(String xid) {
         drive(xid, true);
     }
 
+    /** 提交单个分支（按 branchId）。 */
     public BranchStatus commitBranch(String branchId) {
         return act(branchId, false, null, null);
     }
 
+    /** 回滚单个分支（按 branchId）。 */
     public BranchStatus rollbackBranch(String branchId) {
         return act(branchId, true, null, null);
     }

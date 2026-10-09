@@ -9,6 +9,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+/**
+ * 下单服务的 HTTP 入口：触发跨服务的下单事务（账户扣款 + 写订单 + 远程扣库存），并提供状态查询。
+ *
+ * <p>{@link #place} 只是把请求转交给 {@link OrderService}（真正的 AT 全局事务发起处）；
+ * {@link #state} 用于观察账户、库存、全局事务与 undo 日志，直观验证整笔事务提交或回滚后
+ * 各侧数据是否一致——尤其能看出同一个 XID 是否真的跨服务传播到了 callee 的库存库。
+ */
 @RestController
 @RequestMapping("/order")
 public class OrderController {

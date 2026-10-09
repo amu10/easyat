@@ -15,7 +15,10 @@ import org.springframework.http.ResponseEntity;
  * rolled back — a silent data-consistency hole.
  */
 public final class CoordinationService {
+    /** 分支协调器，执行真正的注册/提交/回滚逻辑。 */
     private final BranchCoordinator coordinator;
+
+    /** 跨服务请求的鉴权组件（HMAC 签名、截止时间、来源校验）。 */
     private final EasyAtTransportSecurity security;
 
     public CoordinationService(BranchCoordinator coordinator, EasyAtTransportSecurity security) {
@@ -23,6 +26,14 @@ public final class CoordinationService {
         this.security = security;
     }
 
+    /**
+     * 处理分支注册请求。先鉴权，再校验必填参数（xid、resourceId），最后委托协调器注册。
+     * 防悬挂命中（资源已回滚）时返回 409。
+     *
+     * @param headers 请求头（含鉴权信息）
+     * @param body 请求体（xid / resourceId / service / callbackUrl）
+     * @return 含 branchId 与状态的响应
+     */
     public ResponseEntity<Map<String, Object>> register(
             Map<String, String> headers, Map<String, String> body) {
         if (!security.authorized(headers)) return forbidden();
@@ -41,6 +52,13 @@ public final class CoordinationService {
         return ok(branchId, BranchStatus.REGISTERED.name());
     }
 
+    /**
+     * 处理分支提交请求。先鉴权，再委托协调器提交指定分支。
+     *
+     * @param headers 请求头（含鉴权信息）
+     * @param branchId 分支 id
+     * @return 含分支状态（应为 COMMITTED）的响应
+     */
     public ResponseEntity<Map<String, Object>> commit(
             Map<String, String> headers, String branchId) {
         if (!security.authorized(headers)) return forbidden();
@@ -50,6 +68,15 @@ public final class CoordinationService {
     /**
      * Rollback a branch. Carries {@code xid} (from header) and {@code resourceId} (from body) so
      * the receiving side can perform an empty rollback when the branch row does not exist yet.
+     */
+    /**
+     * 处理分支回滚请求。先鉴权，再带上 xid（来自头）与 resourceId（来自体）委托协调器回滚，
+     * 以便分支缺失时仍能完成空回滚。
+     *
+     * @param headers 请求头（含鉴权信息与 XID）
+     * @param branchId 分支 id
+     * @param body 请求体（可含 resourceId）
+     * @return 含分支状态（应为 ROLLED_BACK）的响应
      */
     public ResponseEntity<Map<String, Object>> rollback(
             Map<String, String> headers, String branchId, Map<String, String> body) {
@@ -63,6 +90,7 @@ public final class CoordinationService {
                         .name());
     }
 
+    /** 构造成功响应：body 含 branchId 与当前分支状态。 */
     private ResponseEntity<Map<String, Object>> ok(String branchId, String status) {
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         m.put("branchId", branchId);
@@ -70,14 +98,17 @@ public final class CoordinationService {
         return ResponseEntity.ok(m);
     }
 
+    /** 构造 400 错误响应。 */
     private ResponseEntity<Map<String, Object>> bad(String msg) {
         return ResponseEntity.badRequest().body(error(msg));
     }
 
+    /** 构造 401 未授权响应（鉴权失败）。 */
     private ResponseEntity<Map<String, Object>> forbidden() {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error("forbidden"));
     }
 
+    /** 构造统一的错误体 {@code {error: msg}}。 */
     private static Map<String, Object> error(String msg) {
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         m.put("error", msg);
@@ -85,6 +116,13 @@ public final class CoordinationService {
     }
 
     /** HTTP 头名大小写不敏感，按名字查找而不是直接 get。 */
+    /**
+     * 在请求头中按名（大小写不敏感）查找值。
+     *
+     * @param headers 请求头映射
+     * @param name 头名
+     * @return 匹配的值，找不到时返回 null
+     */
     private static String header(Map<String, String> headers, String name) {
         for (Map.Entry<String, String> e : headers.entrySet())
             if (e.getKey() != null && e.getKey().equalsIgnoreCase(name)) return e.getValue();

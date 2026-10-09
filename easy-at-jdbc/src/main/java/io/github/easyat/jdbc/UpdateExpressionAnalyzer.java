@@ -26,12 +26,22 @@ import net.sf.jsqlparser.schema.Column;
 final class UpdateExpressionAnalyzer {
     private UpdateExpressionAnalyzer() {}
 
-    /** Returns the parameter count, or {@code -1} when the expression is unsupported. */
+    /** 用兜底方言统计赋值表达式的参数个数；不支持时返回 {@code -1}。 */
     static int parameterCount(Column target, Expression expression) {
         return parameterCount(target, expression, new GenericAtSqlDialect());
     }
 
-    /** Returns the parameter count, or {@code -1} when the dialect rejects the expression. */
+    /**
+     * 统计赋值表达式里的 JDBC 占位符个数；不支持的表达式返回 {@code -1}。
+     *
+     * <p>递归下降识别：占位符=1，字面量/同列引用=0，括号/正负号透传，算术按左右子树求和，
+     * 时间关键字与函数按方言放行，其余一律 {@code -1}（交给通用快照路径）。
+     *
+     * @param target   被赋值的列（用于判断「同列自引用」是否安全）
+     * @param expression SET 右侧的表达式
+     * @param dialect   当前方言（决定哪些函数/关键字可用）
+     * @return 占位符个数，或 {@code -1}（不支持）
+     */
     static int parameterCount(Column target, Expression expression, AtSqlDialect dialect) {
         if (expression instanceof JdbcParameter) return 1;
         if (literal(expression)) return 0;
@@ -51,6 +61,7 @@ final class UpdateExpressionAnalyzer {
         return -1;
     }
 
+    /** 二元算术表达式的参数个数 = 左子树 + 右子树，任一不支持则整体 {@code -1}。 */
     private static int binaryParameterCount(
             Column target, BinaryExpression expression, AtSqlDialect dialect) {
         int left = parameterCount(target, expression.getLeftExpression(), dialect);
@@ -59,6 +70,7 @@ final class UpdateExpressionAnalyzer {
         return right < 0 ? -1 : left + right;
     }
 
+    /** 函数表达式的参数个数；不支持的函数形态（聚合/去重/带 Order By 等）或方言不放行时返回 {@code -1}。 */
     private static int functionParameterCount(
             Column target, Function function, AtSqlDialect dialect) {
         if (!dialect.supportsUpdateFunction(function.getName())
@@ -82,6 +94,7 @@ final class UpdateExpressionAnalyzer {
         return count;
     }
 
+    /** 判断是否二元算术表达式（+ - * / %）。 */
     private static boolean arithmetic(Expression expression) {
         return expression instanceof Addition
                 || expression instanceof Subtraction
@@ -90,6 +103,7 @@ final class UpdateExpressionAnalyzer {
                 || expression instanceof Modulo;
     }
 
+    /** 判断是否为「标量字面量」（null/数字/十六进制/字符串/日期时间），这类不消耗参数。 */
     private static boolean literal(Expression expression) {
         return expression instanceof NullValue
                 || expression instanceof LongValue
@@ -101,11 +115,13 @@ final class UpdateExpressionAnalyzer {
                 || expression instanceof TimestampValue;
     }
 
+    /** 判断引用列是否与目标列同名（大小写不敏感、去掉引号），用于「同列自引用」安全校验。 */
     private static boolean sameColumn(Column target, Column referenced) {
         return unquote(target.getColumnName())
                 .equalsIgnoreCase(unquote(referenced.getColumnName()));
     }
 
+    /** 去掉标识符两端的引号（反引号 / 双引号 / 方括号），未加引号则原样返回。 */
     private static String unquote(String value) {
         if (value == null || value.length() < 2) return value;
         char first = value.charAt(0);

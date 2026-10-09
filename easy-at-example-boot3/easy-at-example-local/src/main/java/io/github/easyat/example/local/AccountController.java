@@ -5,6 +5,13 @@ import java.util.Map;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 本地 AT 示例的 HTTP 入口：演示一笔只涉及本服务数据库的转账事务（账户 A 扣款、账户 B 加款）。
+ *
+ * <p>除了触发转账（{@link #transfer}），本控制器还提供几个只读查询接口，方便直观查看
+ * 全局事务状态（{@code easy_at_global}）与已落库的 undo 日志（{@code easy_at_undo_log}），
+ * 验证 AT 事务最终是提交还是回滚。
+ */
 @RestController
 @RequestMapping("/demo")
 public class AccountController {
@@ -16,6 +23,7 @@ public class AccountController {
         this.jdbc = jdbc;
     }
 
+    /** 查询账户表当前余额，转账前后各看一眼即可验证结果。 */
     @GetMapping("/accounts")
     public List<Map<String, Object>> accounts() {
         return jdbc.queryForList("SELECT id,balance FROM account ORDER BY id");
@@ -38,6 +46,18 @@ public class AccountController {
                         + "FROM easy_at_undo_log ORDER BY created_at DESC");
     }
 
+    /**
+     * 触发一次转账，并在完成后直接返回账户余额快照。
+     *
+     * <p>{@code fail=true} 时 {@link TransferService#transfer} 会在扣款后抛异常，
+     * 从而演示整笔 AT 事务回滚、余额恢复原状的效果。
+     *
+     * @param from 付款方账户 id
+     * @param to 收款方账户 id
+     * @param amount 转账金额
+     * @param fail 是否模拟扣款后失败（用于演示回滚）
+     * @return 转账结束后的账户余额列表
+     */
     @PostMapping("/transfer")
     public List<Map<String, Object>> transfer(
             @RequestParam("from") long from,

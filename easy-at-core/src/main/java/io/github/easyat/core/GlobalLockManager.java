@@ -16,6 +16,7 @@ public interface GlobalLockManager {
         acquire(resourceId, tableName, primaryKey, xid);
     }
 
+    /** 释放该 XID 持有的全部全局行锁（事务提交或回滚收敛后调用）。 */
     void releaseByXid(String xid);
 
     /**

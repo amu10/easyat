@@ -12,15 +12,34 @@ import java.util.concurrent.*;
  * it also drives any registered branches so cross-service rollback is coordinated.
  */
 public final class AtRecoveryScheduler implements AutoCloseable {
+    /** 事务/分支存储，用于拉取可恢复事务、抢租约、查状态。 */
     private final AtRepository repository;
+
+    /** 全局事务管理器，负责本地提交/回滚与恢复推进。 */
     private final AtTransactionManager manager;
+
+    /** 分支协调器，本地恢复完成后由其驱动跨服务分支回滚（可为 null，表示只做本地恢复）。 */
     private final BranchCoordinator coordinator;
+
+    /** 指标采集器（可为 null）。 */
     private final EasyAtMetrics metrics;
+
+    /** 本实例的归属标识；抢到的恢复租约会记在该 owner 名下。 */
     private final String owner;
+
+    /** 恢复扫描间隔（毫秒）。 */
     private final long intervalMillis;
+
+    /** 单次拉取的可恢复事务批大小。 */
     private final int batchSize;
+
+    /** 恢复租约时长（毫秒）。持有租约期间其它实例不会重复处理同一事务。 */
     private final long leaseMillis;
+
+    /** 单线程调度器（守护线程），保证恢复串行、互不干扰。 */
     private final ScheduledExecutorService executor;
+
+    /** 当前已注册的调度任务句柄。 */
     private volatile ScheduledFuture<?> task;
 
     public AtRecoveryScheduler(
@@ -59,6 +78,9 @@ public final class AtRecoveryScheduler implements AutoCloseable {
                         });
     }
 
+    /**
+     * 启动定时恢复。仅在尚未启动（{@code task == null}）时注册固定延迟任务，重复调用幂等。
+     */
     public synchronized void start() {
         if (task == null)
             task =
@@ -69,10 +91,17 @@ public final class AtRecoveryScheduler implements AutoCloseable {
                             TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * 立即触发一次恢复（不经过定时调度），常用于运维手动触发或测试。
+     */
     public void recoverNow() {
         recoverSafely();
     }
 
+    /**
+     * 单次恢复扫描：拉取可恢复事务 → 抢租约 → 推进本地状态 → 驱动跨服务分支，
+     * 全程吞掉存储临时不可用的异常，保证下一次扫描仍能继续。
+     */
     private void recoverSafely() {
         try {
             long now = System.currentTimeMillis();
@@ -118,6 +147,12 @@ public final class AtRecoveryScheduler implements AutoCloseable {
         }
     }
 
+    /**
+     * 读取某全局事务的当前状态；查询异常时返回 {@code null} 而非抛出，避免中断恢复循环。
+     *
+     * @param xid 全局事务 id
+     * @return 当前状态，查询失败或不存在时返回 {@code null}
+     */
     private AtStatus currentStatus(String xid) {
         try {
             return repository.find(xid).map(AtTransaction::getStatus).orElse(null);
@@ -126,6 +161,9 @@ public final class AtRecoveryScheduler implements AutoCloseable {
         }
     }
 
+    /**
+     * 关闭恢复调度器：取消任务并立即关闭线程池。实现 {@link AutoCloseable}。
+     */
     @Override
     public synchronized void close() {
         if (task != null) task.cancel(false);

@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 public final class ManagementUi {
     private ManagementUi() {}
 
+    /** 管理控制台 HTML 内容，在类加载时一次性读取为字符串（缺失时退化为提示页）。 */
     private static final String HTML = load();
 
     /**

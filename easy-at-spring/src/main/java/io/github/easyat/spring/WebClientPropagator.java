@@ -17,14 +17,23 @@ import java.lang.reflect.*;
 public final class WebClientPropagator {
     private WebClientPropagator() {}
 
+    /** WebClient 请求类型全限定名，反射用。 */
     private static final String CLIENT_REQUEST =
             "org.springframework.web.reactive.function.client.ClientRequest";
+
+    /** WebClient 交换函数类型全限定名，反射用。 */
     private static final String EXCHANGE_FUNCTION =
             "org.springframework.web.reactive.function.client.ExchangeFunction";
+
+    /** WebClient 交换过滤器接口全限定名，反射用。 */
     private static final String EXCHANGE_FILTER =
             "org.springframework.web.reactive.function.client.ExchangeFilterFunction";
+
+    /** WebClient.Builder 类型全限定名，反射用。 */
     private static final String WEB_CLIENT_BUILDER =
             "org.springframework.web.reactive.function.client.WebClient$Builder";
+
+    /** WebClientCustomizer 接口全限定名，反射用。 */
     private static final String WEB_CLIENT_CUSTOMIZER =
             "org.springframework.boot.web.reactive.function.client.WebClientCustomizer";
 
@@ -85,8 +94,13 @@ public final class WebClientPropagator {
     }
 
     private static final class ExchangeFilterHandler implements InvocationHandler {
+        /** HMAC 签名器（未配置时跳过签名）。 */
         private final HmacSigner signer;
+
+        /** 本服务名，写入 SOURCE 头。 */
         private final String appName;
+
+        /** 反射缓存的方法句柄：mutate / header / build / exchange / filter，避免每次调用都反射查找。 */
         private final Method mutate, header, build, exchange, filterMethod;
 
         ExchangeFilterHandler(
@@ -106,6 +120,7 @@ public final class WebClientPropagator {
             this.filterMethod = filterMethod;
         }
 
+        /** 代理 ExchangeFilterFunction.filter：在请求发出前注入 AT 上下文头，再交还给调用链。 */
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             if (!filterMethod.equals(method)) return null;
@@ -130,7 +145,10 @@ public final class WebClientPropagator {
     }
 
     private static final class CustomizerHandler implements InvocationHandler {
+        /** Builder.filter(ExchangeFilterFunction) 的方法句柄，用于把过滤器挂到 WebClient.Builder 上。 */
         private final Method filterMethod;
+
+        /** 待注入的交换过滤器实例。 */
         private final Object filter;
 
         CustomizerHandler(Class<?> builderCls, Object filter) throws Exception {
@@ -138,6 +156,7 @@ public final class WebClientPropagator {
             this.filterMethod = builderCls.getMethod("filter", Class.forName(EXCHANGE_FILTER));
         }
 
+        /** 代理 WebClientCustomizer.customize：在 Builder 上挂上交换过滤器。 */
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             if ("customize".equals(method.getName()) && args != null && args.length == 1) {

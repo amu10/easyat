@@ -19,6 +19,18 @@ public final class JdbcAtCleaner {
         this.dataSource = dataSource;
     }
 
+    /**
+     * 增量清理已终态（COMMITTED / ROLLED_BACK）的 JDBC 事务历史与过期全局锁。
+     *
+     * <p>整批在一个本地事务里完成（先删 undo / branch，再删 global，再批量删过期锁），
+     * 任一步失败整体回滚，保证「不留下孤儿记录」。
+     *
+     * @param committedBefore   清理 updatedAt 早于此时间戳的 COMMITTED 事务
+     * @param rolledBackBefore  清理 updatedAt 早于此时间戳的 ROLLED_BACK 事务
+     * @param expiredLockBefore 清理 lease_until 早于此时间戳的过期锁
+     * @param batchSize         每批最多处理多少条（限流，防止单事务过大）
+     * @return 本批次清理的条数统计
+     */
     public CleanupResult cleanup(
             long committedBefore, long rolledBackBefore, long expiredLockBefore, int batchSize) {
         if (batchSize <= 0) throw new IllegalArgumentException("batchSize must be positive");
@@ -47,6 +59,7 @@ public final class JdbcAtCleaner {
         }
     }
 
+    /** 删除某一终态、updatedAt 早于给定阈值的事务：先删其子表（undo/branch），再删 global 行。 */
     private int cleanupTransactions(
             Connection connection, AtStatus status, long updatedBefore, int batchSize)
             throws SQLException {
@@ -68,6 +81,7 @@ public final class JdbcAtCleaner {
         }
     }
 
+    /** 选出本批要清理的事务 xid（按 updated_at、xid 排序，限 batchSize 条）。 */
     private List<String> selectXids(
             Connection connection, AtStatus status, long updatedBefore, int batchSize)
             throws SQLException {
@@ -86,6 +100,7 @@ public final class JdbcAtCleaner {
         return xids;
     }
 
+    /** 按 xid 集合批量删除指定表（easy_at_undo_log / easy_at_branch）中的对应行。 */
     private void deleteByXids(Connection connection, String table, List<String> xids)
             throws SQLException {
         String sql = "DELETE FROM " + table + " WHERE xid IN (" + placeholders(xids.size()) + ")";
@@ -95,6 +110,7 @@ public final class JdbcAtCleaner {
         }
     }
 
+    /** 删除过期的全局锁行：先选出 lease_until 过期的锁，再用「lease_until 仍过期」做条件批量删（防误删刚续租的锁）。 */
     private int cleanupLocks(Connection connection, long expiredBefore, int batchSize)
             throws SQLException {
         String select =

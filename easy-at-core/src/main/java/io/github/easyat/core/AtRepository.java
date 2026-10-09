@@ -11,8 +11,10 @@ import java.util.*;
  * the status of a JDBC-backed transaction.
  */
 public interface AtRepository {
+    /** 持久化一个新建的全局事务（状态 ACTIVE）。同一 xid 重复创建必须幂等或报错。 */
     void create(AtTransaction tx);
 
+    /** 按 xid 查找全局事务；不存在时返回 {@link Optional#empty()}。 */
     Optional<AtTransaction> find(String xid);
 
     /** Persists undo records and retry bookkeeping for the whole transaction (File path). */

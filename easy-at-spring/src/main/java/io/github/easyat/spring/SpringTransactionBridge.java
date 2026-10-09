@@ -6,6 +6,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /** Bridges easyAt to Spring's local transaction via {@link TransactionSynchronizationManager}. */
 public final class SpringTransactionBridge implements LocalTransactionBridge {
+    /**
+     * 判断当前线程是否真的处于 Spring 本地事务中。
+     *
+     * @return 存在真实（已激活）本地事务时返回 true
+     */
     @Override
     public boolean isActive() {
         return TransactionSynchronizationManager.isActualTransactionActive();

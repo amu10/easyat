@@ -10,14 +10,31 @@ import java.util.concurrent.*;
  * exponential schedule persisted to the branch store so delivery resumes after a restart.
  */
 public final class BranchRetryScheduler implements AutoCloseable {
+    /** 默认最大重试次数（重试耗尽后收敛到人工介入）。 */
     private static final int DEFAULT_MAX_RETRIES = 20;
+
+    /** 分支存储，用于拉取到点待重试的分支。 */
     private final BranchRepository branches;
+
+    /** 分支协调器，重新执行分支的 commit/rollback 投递。 */
     private final BranchCoordinator coordinator;
+
+    /** 重试扫描间隔（毫秒）。 */
     private final long intervalMillis;
+
+    /** 单次拉取待重试分支的批大小。 */
     private final int batchSize;
+
+    /** 最大重试次数（<=0 时回落到 {@link #DEFAULT_MAX_RETRIES}）。 */
     private final int maxRetries;
+
+    /** 指标采集器（可为 null）。 */
     private final EasyAtMetrics metrics;
+
+    /** 单线程调度器（守护线程），保证重试串行。 */
     private final ScheduledExecutorService executor;
+
+    /** 当前已注册的调度任务句柄。 */
     private volatile ScheduledFuture<?> task;
 
     public BranchRetryScheduler(
@@ -50,6 +67,9 @@ public final class BranchRetryScheduler implements AutoCloseable {
                         });
     }
 
+    /**
+     * 启动定时重试。仅在尚未启动（{@code task == null}）时注册固定延迟任务，重复调用幂等。
+     */
     public synchronized void start() {
         if (task == null)
             task =
@@ -60,10 +80,15 @@ public final class BranchRetryScheduler implements AutoCloseable {
                             TimeUnit.MILLISECONDS);
     }
 
+    /** 立即触发一次重试扫描（不经过定时调度）。 */
     public void triggerNow() {
         retryPending();
     }
 
+    /**
+     * 单次重试扫描：拉取已到点且未终结的分支；重试耗尽则收敛到 {@code MANUAL_INTERVENTION}，
+     * 否则重新驱动回滚并刷新退避后的下一次重试点。存储临时不可用时吞掉异常。
+     */
     private void retryPending() {
         try {
             long now = System.currentTimeMillis();
@@ -98,10 +123,19 @@ public final class BranchRetryScheduler implements AutoCloseable {
         }
     }
 
+    /**
+     * 计算下一次重试的退避间隔：1s、2s、4s… 指数增长，封顶 5 分钟。
+     *
+     * @param retries 已重试次数
+     * @return 退避毫秒数（最大 300000）
+     */
     private long backoff(int retries) {
         return Math.min(300000L, 1000L << Math.min(retries, 8));
     }
 
+    /**
+     * 关闭重试调度器：取消任务并立即关闭线程池。实现 {@link AutoCloseable}。
+     */
     @Override
     public synchronized void close() {
         if (task != null) task.cancel(false);

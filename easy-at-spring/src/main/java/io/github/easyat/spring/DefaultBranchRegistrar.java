@@ -12,7 +12,10 @@ import org.slf4j.MDC;
  * DataSource dependency (which would break the DataSource BeanPostProcessor cycle).
  */
 public final class DefaultBranchRegistrar implements BranchRegistrar {
+    /** 延迟获取分支存储：用 Supplier 避免在构造时就引入 DataSource 依赖（会打破 BeanPostProcessor 循环）。 */
     private final Supplier<BranchRepository> repository;
+
+    /** 本服务名，写入分支记录的服务名字段。 */
     private final String appName;
 
     public DefaultBranchRegistrar(Supplier<BranchRepository> repository, String appName) {

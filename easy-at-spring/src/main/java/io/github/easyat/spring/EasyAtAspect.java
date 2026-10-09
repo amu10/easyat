@@ -19,8 +19,13 @@ import org.springframework.core.annotation.Order;
 @Aspect
 @Order(100)
 public final class EasyAtAspect {
+    /** 全局事务管理器，负责 begin/commit/rollback 与本地 undo 推进。 */
     private final AtTransactionManager manager;
+
+    /** 分支协调器，业务完成后由其驱动跨服务分支的提交/回滚（可为 null）。 */
     private final BranchCoordinator coordinator;
+
+    /** 指标采集器（可为 null）。 */
     private final EasyAtMetrics metrics;
 
     public EasyAtAspect(AtTransactionManager m) {

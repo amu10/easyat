@@ -59,6 +59,12 @@ public final class ReconciliationCli {
         }
     }
 
+    /**
+     * 根据对账报告生成「处理建议」文本，按问题类型给出人工介入 / 重驱动 / 释放锁等指引。
+     *
+     * @param r 对账报告
+     * @return 给运维/研发看的处理建议（中文）
+     */
     private static String advice(ReconciliationReport r) {
         if (r.problemCount() == 0) return "  => OK: 未发现残留/泄漏/人工介入。";
         StringBuilder sb = new StringBuilder("  => 处理建议：\n");
@@ -76,7 +82,7 @@ public final class ReconciliationCli {
         return sb.toString();
     }
 
-    /** 极简 DataSource：只为 CLI 准备，不引入连接池依赖。 */
+    /** 极简 DataSource：只为 CLI 准备，不引入连接池依赖，每次 getConnection 走 DriverManager。 */
     private static final class SimpleDataSource implements DataSource {
         private final String url, user, password;
         private int loginTimeout;
@@ -87,39 +93,48 @@ public final class ReconciliationCli {
             this.password = password;
         }
 
+        /** 用构造时给定的 url/用户/口令打开一条连接（未给口令则匿名连接）。 */
         public Connection getConnection() throws SQLException {
             return user == null
                     ? java.sql.DriverManager.getConnection(url)
                     : java.sql.DriverManager.getConnection(url, user, password);
         }
 
+        /** 忽略构造参数，用调用方传入的临时用户名/口令打开连接。 */
         public Connection getConnection(String u, String p) throws SQLException {
             return java.sql.DriverManager.getConnection(url, u, p);
         }
 
+        /** 本实现不记日志，返回 null。 */
         public PrintWriter getLogWriter() throws SQLException {
             return null;
         }
 
+        /** 本实现不记日志，空操作。 */
         public void setLogWriter(PrintWriter out) throws SQLException {}
 
+        /** 设置登录超时（仅本地字段，DriverManager 实际超时走全局设置）。 */
         public void setLoginTimeout(int seconds) throws SQLException {
             this.loginTimeout = seconds;
         }
 
+        /** @return 登录超时秒数。 */
         public int getLoginTimeout() throws SQLException {
             return loginTimeout;
         }
 
+        /** 不支持父日志器，直接抛 SQLFeatureNotSupportedException。 */
         public Logger getParentLogger() throws SQLFeatureNotSupportedException {
             throw new SQLFeatureNotSupportedException();
         }
 
+        /** 若本实例实现了目标接口则返回自身，否则抛 SQLException（DataSource 包装契约）。 */
         public <T> T unwrap(Class<T> iface) throws SQLException {
             if (iface.isInstance(this)) return iface.cast(this);
             throw new SQLException("Not a wrapper for " + iface);
         }
 
+        /** 判断本实例是否是给定接口的包装目标。 */
         public boolean isWrapperFor(Class<?> iface) {
             return iface.isInstance(this);
         }

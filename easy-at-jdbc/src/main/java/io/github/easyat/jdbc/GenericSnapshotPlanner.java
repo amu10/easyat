@@ -80,6 +80,17 @@ final class GenericSnapshotPlanner {
         }
     }
 
+    /**
+     * 为一条 UPDATE 构造 before-image 快照计划。
+     *
+     * <p>把原语句的 FROM / WHERE / ORDER BY / LIMIT 原样搬进一条 SELECT 快照，并收集 SET 消耗的参数个数
+     * （用于计算快照参数的下标偏移）。多目标表、别名指向他表的 SET、WITH 子句一律拒绝。
+     *
+     * @param update  JSqlParser 解析出的 UPDATE 语句
+     * @param dialect 当前方言
+     * @param maxRows 允许的最大影响行数（超出即拒）
+     * @return 通用快照计划（DELETE=false）
+     */
     static Plan forUpdate(Update update, AtSqlDialect dialect, int maxRows) {
         String sql = update.toString();
         RecognizerSupport.reject(
@@ -128,6 +139,17 @@ final class GenericSnapshotPlanner {
                 setColumns);
     }
 
+    /**
+     * 为一条 DELETE 构造 before-image 快照计划。
+     *
+     * <p>只支持删主表（或没指定别名的单表 DELETE）；{@code DELETE ... USING}、多表、WITH 子句一律拒绝。
+     * 快照参数偏移为 0（DELETE 没有 SET 子句）。
+     *
+     * @param delete  JSqlParser 解析出的 DELETE 语句
+     * @param dialect 当前方言
+     * @param maxRows 允许的最大影响行数（超出即拒）
+     * @return 通用快照计划（DELETE=true）
+     */
     static Plan forDelete(Delete delete, AtSqlDialect dialect, int maxRows) {
         String sql = delete.toString();
         RecognizerSupport.reject(

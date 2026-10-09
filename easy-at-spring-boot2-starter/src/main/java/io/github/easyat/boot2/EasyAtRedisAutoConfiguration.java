@@ -12,6 +12,11 @@ import org.springframework.context.annotation.Configuration;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 
+/**
+ * Redis 自动配置：仅当类路径存在 {@code JedisPool} 与 {@code RedisAtRepository} 时生效，
+ * 提供 Redis 存储仓库、全局锁、分支仓库以及 Redis 侧清理调度，
+ * 支撑 {@code storage=redis}（全 Redis）与 {@code storage=hybrid}（全局状态在 Redis、undo 在业务库）两种模式。
+ */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnClass(
         name = {
@@ -21,6 +26,13 @@ import redis.clients.jedis.JedisPoolConfig;
 public class EasyAtRedisAutoConfiguration {
 
     /** storage=redis（全 Redis）或 hybrid（全局状态在 Redis、undo 在业务库）都需要连接池。 */
+    /**
+     * Jedis 连接池：供 Redis 存储仓库、全局锁、分支仓库复用。
+     * storage=redis / hybrid 或 lock=redis 三种情况任一命中即需要连接池。
+     *
+     * @param props easy-at 配置（取 Redis 连接参数）
+     * @return Jedis 连接池
+     */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnExpression(
@@ -39,6 +51,15 @@ public class EasyAtRedisAutoConfiguration {
                 r.getDatabase());
     }
 
+    /**
+     * Redis 全局事务仓库：全局事务/分支/锁全部存 Redis（storage=redis 或 hybrid 时启用）。
+     * 设最小 1s 的 TTL，保证即使进程崩溃未清理，Redis 侧记录也能到期自动回收。
+     *
+     * @param pool   Jedis 连接池
+     * @param codec  undo 数据编解码器
+     * @param props  easy-at 配置（取 Redis TTL）
+     * @return Redis 存储仓库
+     */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnExpression(
@@ -48,6 +69,13 @@ public class EasyAtRedisAutoConfiguration {
                 pool, codec, "easy-at", Math.max(1L, props.getRedis().getTtl().getSeconds()));
     }
 
+    /**
+     * Redis 全局锁管理器（lock.type=redis 时启用）：分布式全局锁记录存 Redis。
+     *
+     * @param pool  Jedis 连接池
+     * @param props easy-at 配置（取锁租约与等待超时）
+     * @return Redis 全局锁管理器
+     */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "easy-at.lock", name = "type", havingValue = "redis")
@@ -58,6 +86,12 @@ public class EasyAtRedisAutoConfiguration {
                 props.getLock().getWaitTimeout().toMillis());
     }
 
+    /**
+     * Redis 分支仓库（storage=redis 或 hybrid 时启用）：分支事务记录存 Redis。
+     *
+     * @param pool Jedis 连接池
+     * @return Redis 分支仓库
+     */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnExpression(
@@ -82,6 +116,7 @@ public class EasyAtRedisAutoConfiguration {
             ObjectProvider<UndoRepository> undoRepository) {
         RedisCleanup cleaner =
                 repository instanceof RedisAtRepository
+                        // 优先复用仓库自带的 cleanup，避免重复构造连接；否则用池手动建一个。
                         ? ((RedisAtRepository) repository).cleanup()
                         : new RedisCleanup(
                                 pool,
@@ -89,6 +124,7 @@ public class EasyAtRedisAutoConfiguration {
                                 Math.max(1L, props.getRedis().getTtl().getSeconds()));
         EasyAtProperties.Cleanup cleanup = props.getCleanup();
         UndoRepository undoStore = undoRepository.getIfAvailable();
+        // 混合模式挂了 undo 仓库时，每批删掉的 xid 要级联清业务库 undo 日志；纯 Redis 模式为 null。
         Consumer<List<String>> cascade =
                 undoStore == null
                         ? null

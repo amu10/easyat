@@ -11,9 +11,28 @@ import net.sf.jsqlparser.expression.operators.relational.InExpression;
 import net.sf.jsqlparser.schema.Column;
 import net.sf.jsqlparser.schema.Table;
 
+/**
+ * 识别器共用的工具类：负责「主键谓词解析、表名提取、参数计数、字面量还原、引用去除、拒绝/不支持抛错」。
+ *
+ * <p>所有 DML 识别器（INSERT/UPDATE/DELETE/通用快照）都依赖这里，避免在各自代码里重复 SQL 解析假设。
+ * 关键不变量：任何「无法安全生成 undo」的语句都在此抛 {@link UnsupportedAtSqlException}，
+ * 让上层决定是拒绝还是退回通用快照路径。
+ */
 final class RecognizerSupport {
     private RecognizerSupport() {}
 
+    /**
+     * 从 WHERE 表达式里解析「主键精确条件」。
+     *
+     * <p>只接受两种安全形态：{@code 主键 = ?}（参数个数为 1），或 {@code 主键 IN (?,...,?)}
+     * （且元素全为 {@code ?}、个数在 maxRows 内）。其它任何形态（范围、NOT IN、子查询、多列）都拒绝，
+     * 因为严格路径必须能枚举出「会被改/删的每一行主键」才能逐行生成 undo。
+     *
+     * @param expression WHERE 子句表达式
+     * @param sql        原始 SQL（用于报错信息）
+     * @param maxRows    主键 IN 的大小上限
+     * @return 含命中主键列名与参数个数的 PredicatePlan
+     */
     static PredicatePlan primaryKeyPredicate(Expression expression, String sql, int maxRows) {
         if (expression instanceof EqualsTo) {
             EqualsTo equal = (EqualsTo) expression;
@@ -37,6 +56,7 @@ final class RecognizerSupport {
         throw unsupported(sql);
     }
 
+    /** 取表的「schema.表」全限定名；带别名的表拒绝（别名交给通用快照路径处理）。 */
     static String tableName(Table table) {
         if (table == null) throw new AtException("Missing table is not supported for AT SQL");
         // 别名此前直接抛 AtException。改成"不支持"，让 SqlUndoLogGenerator 有机会退回通用快照路径
@@ -99,10 +119,12 @@ final class RecognizerSupport {
             throw new UnsupportedAtSqlException("Unsupported AT SQL; " + reason + ": " + sql);
     }
 
+    /** 规范化标识符：去掉引号后返回（用于从 schema 节点取裸名）。 */
     static String identifier(String value) {
         return value == null ? null : unquote(value);
     }
 
+    /** 去掉标识符两端的引号（反引号 / 双引号 / 方括号），未加引号则原样返回。 */
     static String unquote(String value) {
         if (value == null || value.length() < 2) return value;
         char first = value.charAt(0), last = value.charAt(value.length() - 1);
@@ -113,14 +135,17 @@ final class RecognizerSupport {
                 : value;
     }
 
+    /** 判断集合非 null 且非空。 */
     static boolean notEmpty(Collection<?> values) {
         return values != null && !values.isEmpty();
     }
 
+    /** 通用拒绝：条件成立时抛出「仅支持主键 DML / 白名单表达式」的标准不支持异常。 */
     static void reject(boolean condition, String sql) {
         if (condition) throw unsupported(sql);
     }
 
+    /** 构造标准 UnsupportedAtSqlException（统一文案：仅支持主键 INSERT/UPDATE/DELETE 与受限表达式）。 */
     static UnsupportedAtSqlException unsupported(String sql) {
         return new UnsupportedAtSqlException(
                 "Unsupported AT SQL; only primary-key INSERT/UPDATE/DELETE and bounded primary-key IN updates/deletes are allowed; UPDATE values may use parameters, scalar literals, whitelisted functions, or same-column arithmetic (+, -, *, /, %): "

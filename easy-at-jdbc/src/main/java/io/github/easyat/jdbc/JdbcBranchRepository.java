@@ -113,6 +113,7 @@ public final class JdbcBranchRepository implements BranchRepository {
         return false;
     }
 
+    /** 按 (xid, 资源 id) 查唯一分支；任一参数为 null 时直接返回空（避免误查全表）。 */
     @Override
     public Optional<AtBranch> findByXidResource(String xid, String resourceId) {
         if (xid == null || resourceId == null) return Optional.empty();
@@ -130,6 +131,7 @@ public final class JdbcBranchRepository implements BranchRepository {
         }
     }
 
+    /** 按 branch_id 查单个分支。 */
     @Override
     public Optional<AtBranch> find(String branchId) {
         String sql =
@@ -145,6 +147,11 @@ public final class JdbcBranchRepository implements BranchRepository {
         }
     }
 
+    /**
+     * 用 CAS 把分支从 {@code expected} 状态推进到 {@code next} 状态（乐观锁，避免并发重复回滚）。
+     *
+     * @return 是否真的更新了一行（{@code expected} 匹配时为真）
+     */
     @Override
     public boolean transition(String branchId, BranchStatus expected, BranchStatus next) {
         String sql =
@@ -161,6 +168,7 @@ public final class JdbcBranchRepository implements BranchRepository {
         }
     }
 
+    /** 按 xid 列出其下全部分支，按 sequence 排序（恢复调度遍历用）。 */
     @Override
     public List<AtBranch> byXid(String xid) {
         String sql =
@@ -178,6 +186,10 @@ public final class JdbcBranchRepository implements BranchRepository {
         }
     }
 
+    /**
+     * 扫描待恢复的分支：处于 ROLLING_BACK / ROLLBACK_FAILED 且已过重试时间（或从未排期）的，
+     * 按 sequence 排序，最多取 limit 条交给恢复调度。
+     */
     @Override
     public List<AtBranch> pendingActions(long now, int limit) {
         String sql =
@@ -195,6 +207,7 @@ public final class JdbcBranchRepository implements BranchRepository {
         }
     }
 
+    /** 记录一次恢复尝试：更新重试次数与下次重试时间（nextRetryAt<=0 表示立即重试，置 NULL）。 */
     @Override
     public void updateRecovery(String branchId, int retries, long nextRetryAt) {
         try (Connection c = dataSource.getConnection();
@@ -211,6 +224,7 @@ public final class JdbcBranchRepository implements BranchRepository {
         }
     }
 
+    /** 保存分支：已存在则只更新状态，不存在则注册（upsert 语义）。 */
     @Override
     public void save(AtBranch b) {
         Optional<AtBranch> existing = find(b.getBranchId());

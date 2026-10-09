@@ -18,6 +18,16 @@ import net.sf.jsqlparser.statement.select.Values;
  * RETURN_GENERATED_KEYS} 就无从定位，此时宁可明确拒绝，也不能生成猜的 undo。
  */
 final class InsertRecognizer implements AtSqlRecognizer<Insert, InsertRecognizer.Plan> {
+    /**
+     * 解析并校验一条 INSERT 语句，返回带方言信息的执行计划。
+     *
+     * <p>只接受「显式列 + 逐行 VALUES（含多行）」形式；{@code INSERT ... SELECT}、ON CONFLICT、
+     * {@code INSERT ... SET}、WITH 子句一律拒绝（无法在执行前拿到主键）。
+     *
+     * @param insert  JSqlParser 解析出的 INSERT 语句
+     * @param dialect 当前方言（用于拼加引号的表引用）
+     * @return 含列名与每行值表达式的计划
+     */
     @Override
     public Plan recognize(Insert insert, AtSqlDialect dialect) {
         String sql = insert.toString();

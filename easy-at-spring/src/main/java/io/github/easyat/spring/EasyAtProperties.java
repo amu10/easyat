@@ -16,13 +16,28 @@ public class EasyAtProperties {
      */
     private boolean production = false;
 
+    /** 事务/分支/undo 的存储配置（file / redis / jdbc）。 */
     private final Storage storage = new Storage();
+
+    /** Redis 连接配置，供 Redis 存储与 Redis 锁管理器共享。 */
     private final Redis redis = new Redis();
+
+    /** 全局锁管理器配置（file / redis）。 */
     private final Lock lock = new Lock();
+
+    /** 本地 SQL 解析相关配置（严格模式、方言、最大影响行数）。 */
     private final Sql sql = new Sql();
+
+    /** 恢复调度配置（开关、间隔、批大小、租约、最大重试）。 */
     private final Recovery recovery = new Recovery();
+
+    /** 历史/锁清理配置（开关、间隔、批大小、各保留期）。 */
     private final Cleanup cleanup = new Cleanup();
+
+    /** 跨服务传输安全配置（HMAC 密钥）。 */
     private final Transport transport = new Transport();
+
+    /** 运维管理端点配置（开关、token）。 */
     private final Management management = new Management();
 
     /**

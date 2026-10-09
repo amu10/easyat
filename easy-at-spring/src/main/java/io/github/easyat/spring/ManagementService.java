@@ -10,14 +10,29 @@ import java.util.*;
  * through {@code @RestController} adapters and perform the token check.
  */
 public final class ManagementService {
+    /** 事务/分支存储，用于查询事务、强制状态迁移。 */
     private final AtRepository repository;
+
+    /** 全局事务管理器，执行强制回滚/状态迁移。 */
     private final AtTransactionManager manager;
+
+    /** 指标采集器。 */
     private final EasyAtMetrics metrics;
+
+    /** 管理端点是否启用；关闭时所有操作鉴权直接失败。 */
     private final boolean enabled;
+
+    /** 管理端点访问 token；为空表示启用但不鉴权（dev 方便）。 */
     private final String token;
+
+    /** undo 数据编解码器，用于把 before/after image 转成诊断字符串（可脱敏）。 */
     private final UndoDataCodec codec;
+
+    /** 人类操作的内存审计轨迹（线程安全列表）。 */
     private final List<AuditEntry> audit =
             Collections.synchronizedList(new ArrayList<AuditEntry>());
+
+    /** 可选的对账服务；挂上后 reconciliation() 才返回真实报告。 */
     private ReconciliationService reconciliation;
 
     public ManagementService(
@@ -60,6 +75,7 @@ public final class ManagementService {
         return reconciliation.report().toMap();
     }
 
+    /** @return 管理端点是否启用。 */
     public boolean isEnabled() {
         return enabled;
     }
@@ -74,12 +90,25 @@ public final class ManagementService {
         return token.equals(providedToken);
     }
 
+    /**
+     * 查询单个事务详情（含 undo 诊断信息）。
+     *
+     * @param xid 全局事务 id
+     * @return 事务映射，不存在时返回 {@code not_found} 错误体
+     */
     public Map<String, Object> getTransaction(String xid) {
         Optional<AtTransaction> tx = repository.find(xid);
         if (!tx.isPresent()) return notFound(xid);
         return toMap(tx.get());
     }
 
+    /**
+     * 按状态列举事务。
+     *
+     * @param status 状态名（{@link AtStatus} 枚举名）
+     * @param limit 最多返回条数
+     * @return 事务映射列表
+     */
     public List<Map<String, Object>> listByStatus(String status, int limit) {
         AtStatus s = AtStatus.valueOf(status);
         List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
@@ -112,16 +141,29 @@ public final class ManagementService {
         return toMap(required(xid));
     }
 
+    /** @return 全部人工操作审计记录的快照。 */
     public List<AuditEntry> audit() {
         return new ArrayList<AuditEntry>(audit);
     }
 
+    /**
+     * 按 xid 取出事务，不存在则抛 {@link AtException}。
+     *
+     * @param xid 全局事务 id
+     * @return 事务对象
+     */
     private AtTransaction required(String xid) {
         return repository
                 .find(xid)
                 .orElseThrow(() -> new AtException("Transaction not found: " + xid));
     }
 
+    /**
+     * 把事务对象转成诊断用的映射，附带 undo 的 before/after 诊断字符串（经 {@link UndoDataCodec} 脱敏）。
+     *
+     * @param tx 事务对象
+     * @return 可读的映射结构
+     */
     private Map<String, Object> toMap(AtTransaction tx) {
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         m.put("xid", tx.getXid());
@@ -152,6 +194,7 @@ public final class ManagementService {
         return m;
     }
 
+    /** 构造 not_found 错误体。 */
     private Map<String, Object> notFound(String xid) {
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         m.put("error", "not_found");
@@ -159,16 +202,19 @@ public final class ManagementService {
         return m;
     }
 
+    /** 构造通用错误体。 */
     private Map<String, Object> bad(String msg) {
         Map<String, Object> m = new LinkedHashMap<String, Object>();
         m.put("error", msg);
         return m;
     }
 
+    /** 记录一条人类操作审计。 */
     private void audit(String action, String xid, String operator, String reason, String result) {
         audit.add(new AuditEntry(Instant.now(), action, xid, operator, reason, result));
     }
 
+    /** 一条人工操作审计记录（操作时间、动作、xid、操作人、原因、结果）。 */
     public static final class AuditEntry {
         public final Instant at;
         public final String action, xid, operator, reason, result;

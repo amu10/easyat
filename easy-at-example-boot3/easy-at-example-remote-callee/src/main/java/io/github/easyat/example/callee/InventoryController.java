@@ -16,6 +16,17 @@ public class InventoryController {
         this.service = service;
     }
 
+    /**
+     * 扣减库存的 HTTP 入口，供 caller 通过 Feign 调用。
+     *
+     * <p>实际扣减逻辑在 {@link InventoryService#deduct} 里；若扣减失败该方法会抛异常，
+     * 异常经 Feign 传播回 caller，进而触发整笔全局事务回滚。只有成功时才返回结果对象。
+     *
+     * @param itemId 商品 id
+     * @param qty 扣减数量
+     * @param fail 是否模拟库存服务内部失败（演示跨服务回滚）
+     * @return 扣减成功的结果载体
+     */
     @PostMapping("/deduct")
     public DeductResult deduct(
             @RequestParam("itemId") long itemId,
