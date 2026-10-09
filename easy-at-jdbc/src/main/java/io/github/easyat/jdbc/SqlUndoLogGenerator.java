@@ -131,7 +131,9 @@ final class SqlUndoLogGenerator {
         // bypassed before branch registration, otherwise registering easy_at_branch recursively
         // attempts to register another branch until the connection pool is exhausted.
         if (internalStatement(statement)) return null;
-        registrar.register(xid, resourceId);
+        // 传入业务连接：让分支行与本次 DML、undo log 落在同一个本地事务里（§4.3 分支状态原子性）。
+        // 不支持的实现会忽略该参数并退回独立连接注册，行为与之前一致。
+        registrar.register(xid, resourceId, c);
         if (statement instanceof Update)
             return updateExecutor.execute(
                     this,

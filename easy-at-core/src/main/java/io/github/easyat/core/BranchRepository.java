@@ -7,6 +7,21 @@ import java.util.Optional;
 public interface BranchRepository {
     void register(AtBranch branch);
 
+    /**
+     * 在调用方给定的「业务本地连接」上注册分支，使分支行与业务 DML、undo log 处于同一个本地事务。
+     *
+     * <p>参数是 {@code Object} 而不是 {@code java.sql.Connection}，是为了让 core 保持存储无关 （core 不依赖 JDBC）。JDBC
+     * 实现在识别到 {@code java.sql.Connection} 时接管，其余情况返回 {@code false}，调用方回退到 {@link
+     * #register(AtBranch)}。
+     *
+     * <p>语义要求：业务本地事务回滚时，分支行必须一起消失——资源没做成任何事，就不该留下分支记录。 否则会留下一个永远不会被提交也不会被回滚的悬挂分支。
+     *
+     * @return true 表示已在该连接上完成注册（含幂等命中）；false 表示不支持，调用方需自行回退
+     */
+    default boolean registerIn(AtBranch branch, Object localConnection) {
+        return false;
+    }
+
     Optional<AtBranch> find(String branchId);
 
     /** CAS on branch status. Returns true if the row matched expected status and was updated. */

@@ -17,10 +17,74 @@ public final class JdbcBranchRepository implements BranchRepository {
     public void register(AtBranch b) {
         // (xid, resource_id) 有唯一约束，重复注册是幂等的：先查再插，并用唯一键冲突兜住并发窗口。
         if (findByXidResource(b.getXid(), b.getResourceId()).isPresent()) return;
-        String sql =
-                "INSERT INTO easy_at_branch(branch_id,xid,resource_id,status,service_name,callback_url,sequence,retry_count,next_retry_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,0,NULL,?,?)";
-        try (Connection c = dataSource.getConnection();
-                PreparedStatement p = c.prepareStatement(sql)) {
+        try (Connection c = dataSource.getConnection()) {
+            insert(c, b);
+        } catch (SQLException e) {
+            // 并发下两个实例同时 INSERT：唯一键冲突说明别人先注册成功了，按幂等处理。
+            if (isDuplicateKey(e)) return;
+            throw new AtException("Cannot register AT branch", e);
+        }
+    }
+
+    /**
+     * 在业务本地连接上注册分支，让分支行与业务 DML / undo log 同属一个本地事务。
+     *
+     * <p>两个必须处理好的点：
+     *
+     * <ol>
+     *   <li>同一个本地事务里通常有多条 DML，每条都会走到这里。所以先在本连接上查一次——本连接能看到 自己尚未提交的行，从而避免重复 INSERT。
+     *   <li>若仍撞上唯一键冲突（别的实例并发注册），必须回滚到 savepoint。否则在 PostgreSQL 上， 一条失败语句会把整个业务事务标记为
+     *       aborted，后续语句全部报错，业务直接失败。
+     * </ol>
+     */
+    @Override
+    public boolean registerIn(AtBranch b, Object localConnection) {
+        if (!(localConnection instanceof Connection)) return false;
+        Connection c = (Connection) localConnection;
+        try {
+            if (c.isClosed()) return false;
+            // 本连接上的查重：能看见本事务未提交的行，覆盖「同一事务多条 DML」这一最常见场景。
+            if (existsOn(c, b.getXid(), b.getResourceId())) return true;
+            Savepoint savepoint = null;
+            try {
+                if (!c.getAutoCommit() && c.getMetaData().supportsSavepoints())
+                    savepoint = c.setSavepoint();
+                insert(c, b);
+                if (savepoint != null) c.releaseSavepoint(savepoint);
+                return true;
+            } catch (SQLException e) {
+                if (!isDuplicateKey(e)) throw new AtException("Cannot register AT branch", e);
+                // 幂等：别人先注册成功了。回滚到 savepoint，别污染业务事务。
+                if (savepoint != null) {
+                    try {
+                        c.rollback(savepoint);
+                    } catch (SQLException ignored) {
+                        // 回滚 savepoint 失败说明事务本身已经有问题，交给上层处理。
+                    }
+                }
+                return true;
+            }
+        } catch (SQLException e) {
+            throw new AtException("Cannot register AT branch on business connection", e);
+        }
+    }
+
+    private boolean existsOn(Connection c, String xid, String resourceId) throws SQLException {
+        try (PreparedStatement p =
+                c.prepareStatement("SELECT 1 FROM easy_at_branch WHERE xid=? AND resource_id=?")) {
+            p.setString(1, xid);
+            p.setString(2, resourceId);
+            try (ResultSet r = p.executeQuery()) {
+                return r.next();
+            }
+        }
+    }
+
+    /** 在给定连接上插入分支行。注意：不关闭连接——业务连接归调用方管。 */
+    private void insert(Connection c, AtBranch b) throws SQLException {
+        try (PreparedStatement p =
+                c.prepareStatement(
+                        "INSERT INTO easy_at_branch(branch_id,xid,resource_id,status,service_name,callback_url,sequence,retry_count,next_retry_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,0,NULL,?,?)")) {
             long now = System.currentTimeMillis();
             p.setString(1, b.getBranchId());
             p.setString(2, b.getXid());
@@ -32,10 +96,6 @@ public final class JdbcBranchRepository implements BranchRepository {
             p.setTimestamp(8, new Timestamp(b.getCreatedAt()));
             p.setTimestamp(9, new Timestamp(now));
             p.executeUpdate();
-        } catch (SQLException e) {
-            // 并发下两个实例同时 INSERT：唯一键冲突说明别人先注册成功了，按幂等处理。
-            if (isDuplicateKey(e)) return;
-            throw new AtException("Cannot register AT branch", e);
         }
     }
 

@@ -33,7 +33,7 @@
 | 6 管理 API 与审计 | ✅ 已实现 | `ManagementService` + `EasyAtManagementController`（`GET/POST transactions`、`retry`、`rollback`）、token 鉴权、审计、`DIRTY_WRITE` 诊断 |
 | 7.1/7.2 指标与 MDC | ✅ 已实现 | `EasyAtMetrics`（Micrometer）暴露活跃事务/提交/回滚/锁冲突/恢复队列/人工介入；`EasyAtMdcFilter` 注入 `xid`/`resourceId` |
 | 8 Redis 存储 | ✅ 已实现 | `RedisAtRepository`/`RedisBranchRepository`/`RedisGlobalLockManager`（Lua CAS、token/租约锁、恢复队列） |
-| P3 其余 / 9 测试 | ⚠️ 剩余 | 生成主键/`executeBatch`/多表等仍按设计拒绝；故障注入、多实例并发、真实 MySQL/PostgreSQL/Redis 测试均已补齐（见 §13）；jedis 3.8→6.0 兼容与 `easy_at_branch` 唯一约束已补齐（见 §14）。剩余：**分支注册未与业务本地事务同连接**（`PRODUCTION_GAPS.md §4.3`） |
+| P3 其余 / 9 测试 | ✅ 已收口 | 生成主键/`executeBatch`/多表等按设计拒绝（非缺陷）；故障注入、多实例并发、真实 MySQL/PostgreSQL/Redis 测试已补齐（见 §13）；jedis 3.8→6.0 兼容、`easy_at_branch` 唯一约束已补（见 §14）；**分支注册与业务本地事务同连接**已实现（见 §4.3 / §15） |
 
 ## 1. 当前已经具备的能力
 
@@ -202,9 +202,22 @@ JDBC Repository 当前使用 Java 序列化保存主键、参数和 RowImage，�
 - 表达式更新、子查询和多表 DML。
 - 大字段和流式参数。
 
-### 4.3 分支状态原子性
+### 4.3 分支状态原子性（**已实现**）
 
 需要确保分支注册、undo 写入和业务 DML 位于同一个本地事务中，并在本地提交后可靠推进分支状态。
+
+> **2026-10-09 收口**：分支注册已接入业务本地连接，三者同生共死。详见 §15。
+
+改动要点：
+
+- `BranchRepository#registerIn(AtBranch, Object localConnection)`（参数用 `Object` 以保持 core 存储无关），
+  `JdbcBranchRepository` 识别到 `java.sql.Connection` 时在该连接上 INSERT。
+- `BranchRegistrar#register(xid, resourceId, Object localConnection)` 新增三参数默认方法，
+  两参数版本委托给它并传 `null`——既有实现二进制兼容。
+- `SqlUndoLogGenerator#capture` 把业务连接 `c`（`target.getConnection()` 取到的物理连接）传给 registrar。
+- `DefaultBranchRegistrar` 优先走 `registerIn`，Redis/File 等无本地事务概念的存储自动回退到独立连接。
+- 两个坑已在实现里处理：① 同事务多条 DML 会重复走到注册，故**先在业务连接上查重**（能看见本事务未提交的
+  行）；② 仍撞唯一键冲突时**回滚到 savepoint**——PostgreSQL 上一句报错会把整个业务事务标记为 aborted。
 
 ## 5. 配置与 Spring 集成缺口
 
@@ -347,12 +360,12 @@ Redis 不是单服务投产的绝对前置条件；如果使用 JDBC，必须先
 
 当前版本不适用于：
 
-- 金融、订单、库存等关键一致性业务。
-- 多实例自动恢复场景。
-- 需要完整跨服务提交/回滚的分布式事务。
+- 金融、订单、库存等关键一致性业务（缺少真实流量的 soak 验证，见 §16）。
 - 无法接受人工数据修复的生产系统。
 
-完成 P0 并通过真实数据库、并发和故障注入测试后，才建议评估单服务小流量灰度；完成 P1/P2 后，才应评估跨服务生产部署。
+> **2026-10-09 更新**：P0/P1/P2 与 §13/§14/§15 的修复合入并发布后，
+> 「单实例」「多实例自动恢复」「完整跨服务提交/回滚」三项已从"不适用"移除，
+> 可按 `RUNBOOK.md` 的 5 阶段灰度评估上线。
 
 ## 12. 2026-10-09 已修复的生产阻断项
 
@@ -476,3 +489,42 @@ Redis 不是单服务投产的绝对前置条件；如果使用 JDBC，必须先
   逐场景修复流程（MANUAL_INTERVENTION / DIRTY_WRITE / 锁泄漏）与灰度阶段表见 `RUNBOOK.md`。
 - 回归：`ReconciliationTest` 6 个用例——干净环境必须报 OK，五种异常各自必须被抓到
   （防止"对账永远返回健康"这种假绿）。
+
+## 15. 2026-10-09 分支状态原子性（§4.3，已实现）
+
+分支注册此前走框架自己的独立连接，与业务本地事务不同源。后果是**业务回滚后分支记录仍然留下**——
+协调器以为该资源参与了全局事务、会去回调它提交/回滚，但业务侧其实什么都没做；这个分支既不收敛也不告警。
+
+| 层 | 改动 |
+|---|---|
+| `BranchRepository` | 新增 `default boolean registerIn(AtBranch, Object localConnection)`。参数刻意用 `Object` 而非 `java.sql.Connection`，让 core 保持存储无关 |
+| `JdbcBranchRepository` | 识别到 `Connection` 时在该连接上 INSERT；**不关闭**该连接（归业务方管）。先在本连接查重，撞唯一键冲突时回滚到 savepoint |
+| `BranchRegistrar` | 新增 `default void register(xid, resourceId, Object localConnection)`，两参数版委托给它传 `null`——既有实现二进制兼容 |
+| `DefaultBranchRegistrar` | 优先 `registerIn`；Redis/File 等无本地事务概念的存储自动回退 |
+| `SqlUndoLogGenerator#capture` | 把业务连接 `c`（`target.getConnection()` 取到的**物理**连接）传给 registrar；物理连接不经过代理，因此不会递归触发分支注册 |
+
+两个必须处理的坑：
+
+1. 同一本地事务通常有多条 DML，每条都会走到注册。所以在**业务连接上查重**——它能看见本事务尚未提交的
+   行，从而根本不会重复 INSERT。
+2. 仍撞唯一键冲突（别的实例并发注册）时**回滚到 savepoint**。PostgreSQL 上一句报错会把整个业务事务
+   标记为 aborted，后续语句全部失败，业务直接挂掉。MySQL/H2 无此问题，但统一走 savepoint 更安全。
+
+回归：`BranchRegistrationAtomicityTest` 4 例（H2，分支表带 `(xid, resource_id)` UNIQUE 约束）
+
+- 业务提交 → 分支行可见
+- 业务回滚 → 分支行消失
+- 同事务多条 DML → 只注册一条分支，且不打断事务
+- **反向验证**：故意退回独立连接注册，业务回滚后分支行确实残留——证明前三条测的是 `registerIn` 的效果
+
+## 16. 代码侧已无阻断项，剩下的都是交付与验证流程
+
+到本节为止，文档里**没有未修复的功能性缺陷**了。剩下三件事都不是改代码能解决的：
+
+| # | 事项 | 为什么必须做 |
+|---|---|---|
+| 1 | 提交改动并发布新版本 | 已发布的 0.1.1 是修复前代码；正式版在 Central 不可覆盖，必须升版本重发 |
+| 2 | 用真实业务 SQL 过一遍 AT 能力边界 | AT 刻意只接受"按主键、单行、值为 `?`"的 DML，批量/JOIN/子查询直接抛 `UnsupportedAtSqlException`。别到线上才发现大片 SQL 被拒 |
+| 3 | 按 `RUNBOOK.md` 灰度并影子对账 ≥7 天 | 核心一致性逻辑改完即发、零 soak time。盯 `easy_at_global` 残留、锁泄漏、`MANUAL_INTERVENTION` 计数 |
+
+另：`~/.m2/settings.xml` 里明文存了 Central Token 与 GPG 口令，建议轮换。

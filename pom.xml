@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.amu10</groupId>
   <artifactId>easy-at-parent</artifactId>
-  <version>0.1.1</version>
+  <version>0.1.2</version>
   <packaging>pom</packaging>
   <name>easyAt</name>
   <description>Embedded AT transaction framework for Spring Boot</description>
@@ -26,7 +26,7 @@
     <connection>scm:git:https://github.com/amu10/easyat.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/amu10/easyat.git</developerConnection>
     <url>https://github.com/amu10/easyat</url>
-    <tag>v0.1.1</tag>
+    <tag>v0.1.2</tag>
   </scm>
   <modules>
     <module>easy-at-core</module>
@@ -165,7 +165,7 @@
             <configuration>
               <publishingServerId>central</publishingServerId>
               <autoPublish>false</autoPublish>
-              <deploymentName>io.github.amu10:easyAt:0.1.1</deploymentName>
+              <deploymentName>io.github.amu10:easyAt:0.1.2</deploymentName>
               <skipPublishing>${maven.deploy.skip}</skipPublishing>
             </configuration>
           </plugin>

@@ -22,6 +22,15 @@ public final class DefaultBranchRegistrar implements BranchRegistrar {
 
     @Override
     public void register(String xid, String resourceId) {
+        register(xid, resourceId, null);
+    }
+
+    /**
+     * 传入业务本地连接时优先把分支行写进业务事务（JDBC 存储），保证「分支注册 / undo log / 业务 DML」 三者同生共死。存储不支持时（Redis / File
+     * 没有本地事务概念）自动回退到独立连接注册。
+     */
+    @Override
+    public void register(String xid, String resourceId, Object localConnection) {
         BranchRepository repo = repository.get();
         if (repo == null) return;
         Optional<AtBranch> existing = repo.findByXidResource(xid, resourceId);
@@ -37,7 +46,9 @@ public final class DefaultBranchRegistrar implements BranchRegistrar {
                                 + resourceId);
             return; // already registered
         }
-        repo.register(new AtBranch(xid, resourceId, appName, null, repo.byXid(xid).size() + 1));
+        AtBranch branch = new AtBranch(xid, resourceId, appName, null, repo.byXid(xid).size() + 1);
+        if (localConnection == null || !repo.registerIn(branch, localConnection))
+            repo.register(branch);
         MDC.put("easyAtResourceId", resourceId);
     }
 }
