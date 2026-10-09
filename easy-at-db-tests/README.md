@@ -7,7 +7,7 @@
 
 ## 为什么必须存在
 
-主模块的 59 个用例全部跑在 H2 内存库上。但生产用的是 MySQL / PostgreSQL / Redis，而以下部分
+主模块共 **82 个用例**（72 jdbc + 8 spring + boot2/boot3 各 1），全部跑在 H2 内存库上。但生产用的是 MySQL / PostgreSQL / Redis，而以下部分
 **从未在真实实例上执行过**：
 
 | 未验证项 | 为什么 H2 盖不住 |
@@ -27,7 +27,7 @@
 |---|---|---|
 | PostgreSQL | `setObject` 把 Long 主键当 varchar 发送 | **PG 上回滚 100% 失败**（`bigint = character varying`） |
 | Redis | 加锁 Lua 里 `lease`(number) 与 `now`(string) 比较 | `eval` 抛异常，既拿不到锁也拿不到冲突信号 |
-| jedis | 与 jedis 4.x/5.x 二进制不兼容 | 运行期 `NoSuchMethodError`（**未修**，见下） |
+| jedis | 与 jedis 4.x/5.x 二进制不兼容 | 运行期 `NoSuchMethodError`（**已修**，见下：3.8.0/4.4.6/5.2.0/6.0.0 四档实测各 3/3 全绿） |
 
 ## jedis 版本兼容性验证（已修，可回归）
 

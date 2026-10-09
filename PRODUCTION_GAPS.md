@@ -12,7 +12,9 @@
 >    真实库验证当场暴露并修复了 3 个 H2 永远发现不了的生产缺陷，其中两个是"该功能在目标数据库上根本不可用"级别
 >    （详见 [§13](#13-2026-10-09-真实数据库验证暴露并修复的缺陷)）。
 >
-> 当前用例规模：**默认构建 59 个**（H2）+ **真实库 9 个**（`-Pdbtest`）。
+> 当前用例规模（**2026-10-09 20:20 实测复核**）：默认构建 **82 个**（`easy-at-jdbc` 72 + `easy-at-spring` 8 + boot2/boot3 各 1，`BUILD SUCCESS`）+ 真实库 **12 个**（`-Pdbtest`：MySQL 5.7 6 例、PostgreSQL 16 容器 3 例、Redis 7 本地 3 例，`BUILD SUCCESS`）。
+>
+> **代码侧已无未修复的功能性缺陷**；剩下的全部是交付（发布）+ 验证（压测/灰度/soak）+ 运维配套，见 §16 与 §18。
 
 ## 0. 实现状态总览
 
@@ -529,6 +531,9 @@ Redis 不是单服务投产的绝对前置条件；如果使用 JDBC，必须先
 
 另：`~/.m2/settings.xml` 里明文存了 Central Token 与 GPG 口令，建议轮换。
 
+> **2026-10-09 20:20 复核**：第 1 项仍未完成（`main` ahead 2，Central 无 0.1.2）。
+> 该三人组已不足以覆盖全部风险，完整卡点清单见 [§18](#18-2026-10-09-交付评估代码就绪剩余卡点清单)。
+
 ## 17. 2026-10-09 通用快照路径：子查询 / JOIN / 多行 INSERT（原"刻意拒绝"，现已支持）
 
 此前除"按主键、单行、值为 `?`"之外的 DML 一律抛 `UnsupportedAtSqlException`。这对真实业务 SQL 是硬伤——
@@ -565,6 +570,32 @@ SELECT account.* FROM account WHERE id IN (SELECT aid FROM frozen WHERE status =
 - 真实库：`JoinAndSubqueryAtIT` 3 例（MySQL 5.7 的 `UPDATE ... JOIN`、MySQL 子查询 DELETE、PG 的 `UPDATE ... FROM`）
 - 既有断言同步更新：`AtDataSourceTest` 两条"应拒绝"改为"应支持并回滚"、`InsertRecognizerTest` 字面量改为支持
 
-仍不支持（都是"无法定位受影响的行"）：多目标表 DML、`SET pk=?`、无主键/复合主键表、
-`INSERT ... SELECT`、依赖自增主键却不写主键列、DDL、`TRUNCATE`、`MERGE`、存储过程。
-完整矩阵见 `SQL_COMPATIBILITY.md`，演进记录见 `SQL_COMPATIBILITY_ROADMAP.md` §8.1。
+## 18. 2026-10-09 交付评估：代码就绪，剩余卡点清单
+
+> 结论：**功能正确性已收口**（`mvn -o clean verify` 82 绿 + `-Pdbtest` 12 绿，见 §0），
+> 但"能不能上生产"此刻卡在**交付与验证流程**，而不是代码。以下按严重程度排序。
+
+### 18.1 硬卡点（不满足则不能上线）
+
+| # | 卡点 | 证据 | 怎么消 |
+|---|---|---|---|
+| 1 | **0.1.2 没有发布到 Maven Central** | `git log`：`main` ahead `origin/main` 2 个提交（`01d0d24` 通用 SQL 路径、`afad91b` 文档）；Central 上只有修复前的 0.1.1 | `git push` + `mvn deploy -Prelease`，Portal 上 Publish。**在 0.1.2 可用之前，用户拿到的仍是缺陷版本** |
+| 2 | **零 soak / 零压测数据** | 全仓库无 JMH/Gatling/基准脚本 | 至少给出：单条写 undo 的 RT 增量、热点行锁等待、通用快照路径多一次 SELECT 的开销。核心链路放量前必须有 |
+| 3 | **Redis 存储无历史清理、无 TTL** | `AtCleanupScheduler` 构造参数强绑 `JdbcAtCleaner`（`@ConditionalOnBean(JdbcAtCleaner.class)`）；全仓库搜索 `expire(` / `setex` / `ttl` 无命中 | 用 Redis 存储＝`easy-at:*` 键只增不减，内存持续增长，且实例重启即丢事务状态。**若选 Redis 存储，这是硬卡点**；选 JDBC 存储则不受影响 |
+| 4 | **多实例"跨进程"崩溃演练未做** | `ConcurrentRecoveryTest` 是单 JVM 多线程 + 独立 owner，没有 `kill -9` / 断网 / 容器驱逐 | 真实集群下 kill 实例验证租约接管与补偿唯一性 |
+| 5 | **业务 SQL 未过 AT 边界** | 拒绝清单见 `SQL_COMPATIBILITY.md`：多目标表 DML、`SET pk=?`、无/复合主键表、`INSERT...SELECT`、`ON DUPLICATE KEY`、依赖自增主键却不写主键列 | 拿生产真实 SQL 全量过一遍，看有没有踩线（`UnsupportedAtSqlException` 会被直接拒绝执行） |
+
+### 18.2 运维配套缺口（上线前建议补齐）
+
+| # | 缺口 | 现状 |
+|---|---|---|
+| 6 | 无 CI | `.github/` 目录不存在——每次 PR 不会自动跑 82 个用例 + `-Pdbtest` |
+| 7 | 无告警面 | Micrometer 指标齐（`EasyAtMetrics`），但没有 dashboard json / alert rules yaml，落地要人工翻译一遍指标名 |
+| 8 | 传播客户端覆盖不足 | 只有 `AtRestTemplateInterceptor` / `EasyAtFeignInterceptor` / `WebClientPropagator`；**Dubbo、gRPC、MQ（RocketMQ/Kafka）均无**——链路里只要有一段跨 MQ，XID 就断 |
+| 9 | 管理端鉴权粒度 | 单一静态 token（`easy-at.management.token`），无 RBAC、无 IP 白名单；Operator/审计靠调用方自报 `operator` 参数 |
+| 10 | 凭证未轮换 | `~/.m2/settings.xml` 明文存 Central Token 与 GPG 口令 |
+
+### 18.3 功能边界（不是缺陷，是能力范围）
+
+- 分库分表（ShardingSphere 等代理数据源）、读写分离多数据源、DDL、`TRUNCATE`、`MERGE`、存储过程均未支持也未验证。
+- 一行一锁：热点行的并发写会被全局锁串行化，`GlobalLockConflictException` 随热点上升——这是 AT 的固有代价，不是本实现的 bug。
