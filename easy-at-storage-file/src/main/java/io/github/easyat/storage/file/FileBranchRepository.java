@@ -24,9 +24,28 @@ public final class FileBranchRepository implements BranchRepository {
     public void register(AtBranch b) {
         lock.writeLock().lock();
         try {
+            // 与 JDBC 的 UNIQUE(xid, resource_id) 同语义：同一资源在同一事务下只保留第一条分支，
+            // 重复注册是幂等操作（写锁保证这里没有并发窗口）。
+            for (AtBranch existing : all())
+                if (existing.getXid().equals(b.getXid())
+                        && existing.getResourceId().equals(b.getResourceId())) return;
             write(b);
         } finally {
             lock.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public Optional<AtBranch> findByXidResource(String xid, String resourceId) {
+        if (xid == null || resourceId == null) return Optional.empty();
+        lock.readLock().lock();
+        try {
+            for (AtBranch b : all())
+                if (b.getXid().equals(xid) && b.getResourceId().equals(resourceId))
+                    return Optional.of(b);
+            return Optional.empty();
+        } finally {
+            lock.readLock().unlock();
         }
     }
 

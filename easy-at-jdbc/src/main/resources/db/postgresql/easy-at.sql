@@ -26,3 +26,6 @@ CREATE TABLE IF NOT EXISTS easy_at_branch (
   retry_count INTEGER NOT NULL DEFAULT 0, next_retry_at TIMESTAMP NULL, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_easy_at_branch_xid ON easy_at_branch(xid);
+-- 同一资源在同一全局事务下只允许一条分支（空回滚占位 / 防悬挂 / 协调端点幂等的共同前提）。
+-- 已存在重复数据的库必须先跑 migration/v0.1.2__branch_unique.sql 去重，否则这条 CREATE 会失败。
+CREATE UNIQUE INDEX IF NOT EXISTS uk_easy_at_branch_xid_resource ON easy_at_branch(xid, resource_id);

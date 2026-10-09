@@ -15,6 +15,8 @@ public final class JdbcBranchRepository implements BranchRepository {
 
     @Override
     public void register(AtBranch b) {
+        // (xid, resource_id) 有唯一约束，重复注册是幂等的：先查再插，并用唯一键冲突兜住并发窗口。
+        if (findByXidResource(b.getXid(), b.getResourceId()).isPresent()) return;
         String sql =
                 "INSERT INTO easy_at_branch(branch_id,xid,resource_id,status,service_name,callback_url,sequence,retry_count,next_retry_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,0,NULL,?,?)";
         try (Connection c = dataSource.getConnection();
@@ -31,7 +33,40 @@ public final class JdbcBranchRepository implements BranchRepository {
             p.setTimestamp(9, new Timestamp(now));
             p.executeUpdate();
         } catch (SQLException e) {
+            // 并发下两个实例同时 INSERT：唯一键冲突说明别人先注册成功了，按幂等处理。
+            if (isDuplicateKey(e)) return;
             throw new AtException("Cannot register AT branch", e);
+        }
+    }
+
+    /**
+     * 唯一键冲突判定。SQLState 23xxx 是 SQL 标准的完整性约束冲突（MySQL 1062、PG 23505 都落在里面）； 额外认 MySQL 1062 / SQL
+     * Server 2601 的错误码，避免某些驱动不回填 SQLState。
+     */
+    private static boolean isDuplicateKey(SQLException e) {
+        for (SQLException cur = e; cur != null; cur = cur.getNextException()) {
+            String state = cur.getSQLState();
+            if (state != null && state.startsWith("23")) return true;
+            int code = cur.getErrorCode();
+            if (code == 1062 || code == 2601 || code == 2627) return true;
+        }
+        return false;
+    }
+
+    @Override
+    public Optional<AtBranch> findByXidResource(String xid, String resourceId) {
+        if (xid == null || resourceId == null) return Optional.empty();
+        String sql =
+                "SELECT branch_id,xid,resource_id,status,service_name,callback_url,sequence,retry_count,created_at,updated_at,next_retry_at FROM easy_at_branch WHERE xid=? AND resource_id=?";
+        try (Connection c = dataSource.getConnection();
+                PreparedStatement p = c.prepareStatement(sql)) {
+            p.setString(1, xid);
+            p.setString(2, resourceId);
+            try (ResultSet r = p.executeQuery()) {
+                return r.next() ? Optional.of(map(r)) : Optional.<AtBranch>empty();
+            }
+        } catch (SQLException e) {
+            throw new AtException("Cannot read AT branch by (xid, resourceId)", e);
         }
     }
 

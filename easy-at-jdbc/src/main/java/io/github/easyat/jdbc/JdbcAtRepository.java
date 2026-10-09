@@ -189,13 +189,15 @@ public final class JdbcAtRepository implements ConnectionBoundAtRepository {
 
     @Override
     public List<AtTransaction> recoverable(long now, int limit) {
+        // COMMITTING 也必须纳入扫描：本地事务已提交但全局状态推进失败时，若不处理会造成永久残留 + 全局锁泄漏。
         String sql =
-                "SELECT xid FROM easy_at_global WHERE (status='ACTIVE' AND timeout_at<=?) OR (status='ROLLING_BACK') OR (status='ROLLBACK_FAILED' AND (next_retry_at IS NULL OR next_retry_at<=?)) ORDER BY updated_at ASC";
+                "SELECT xid FROM easy_at_global WHERE (status='ACTIVE' AND timeout_at<=?) OR (status='COMMITTING' AND (next_retry_at IS NULL OR next_retry_at<=?)) OR (status='ROLLING_BACK') OR (status='ROLLBACK_FAILED' AND (next_retry_at IS NULL OR next_retry_at<=?)) ORDER BY updated_at ASC";
         List<AtTransaction> result = new ArrayList<AtTransaction>();
         try (Connection c = dataSource.getConnection();
                 PreparedStatement p = c.prepareStatement(sql)) {
             p.setTimestamp(1, new Timestamp(now));
             p.setTimestamp(2, new Timestamp(now));
+            p.setTimestamp(3, new Timestamp(now));
             try (ResultSet r = p.executeQuery()) {
                 while (r.next() && result.size() < limit) {
                     Optional<AtTransaction> tx = find(r.getString(1));

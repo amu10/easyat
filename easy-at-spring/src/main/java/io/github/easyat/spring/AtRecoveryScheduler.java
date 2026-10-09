@@ -85,20 +85,29 @@ public final class AtRecoveryScheduler implements AutoCloseable {
                 if (!repository.claimLease(tx.getXid(), owner, now + leaseMillis, now))
                     continue; // owned by another instance
                 try {
-                    manager.recover(tx);
+                    AtStatus current = currentStatus(tx.getXid());
+                    if (current == AtStatus.COMMITTING)
+                        // 本地已提交，不能回滚，只能幂等推进到 COMMITTED 并释放锁
+                        manager.finishCommit(tx.getXid());
+                    else manager.recover(tx);
                 } catch (RuntimeException ignored) {
                     /* persisted retry state is the source of truth */
                 } finally {
                     try {
-                        if (coordinator != null) coordinator.rollback(tx.getXid());
+                        AtStatus after = currentStatus(tx.getXid());
+                        // MANUAL_INTERVENTION / DIRTY_WRITE 是留给人工的终态。这里若再驱动分支，
+                        // 会把状态拉回 ROLLING_BACK，使重试上限失效、人工介入标记被抹掉。
+                        if (coordinator != null
+                                && after != null
+                                && after != AtStatus.MANUAL_INTERVENTION
+                                && after != AtStatus.DIRTY_WRITE) coordinator.rollback(tx.getXid());
                     } catch (RuntimeException ignored) {
                         /* best effort */
                     }
                     repository.releaseLease(tx.getXid(), owner);
                 }
                 if (metrics != null) {
-                    AtStatus s =
-                            repository.find(tx.getXid()).map(AtTransaction::getStatus).orElse(null);
+                    AtStatus s = currentStatus(tx.getXid());
                     if (s == AtStatus.MANUAL_INTERVENTION || s == AtStatus.DIRTY_WRITE)
                         metrics.recordManualIntervention();
                 }
@@ -106,6 +115,14 @@ public final class AtRecoveryScheduler implements AutoCloseable {
             if (metrics != null && sample != null) metrics.stopRecovery(sample);
         } catch (RuntimeException ignored) {
             /* database/filesystem may be temporarily unavailable */
+        }
+    }
+
+    private AtStatus currentStatus(String xid) {
+        try {
+            return repository.find(xid).map(AtTransaction::getStatus).orElse(null);
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 

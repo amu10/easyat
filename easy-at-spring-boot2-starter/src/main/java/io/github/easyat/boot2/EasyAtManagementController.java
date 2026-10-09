@@ -39,6 +39,13 @@ public final class EasyAtManagementController {
         return service.listByStatus(status, limit);
     }
 
+    /** 影子运行对账：GET /_easy-at/v1/reconciliation —— 建议灰度期间定时拉取并配置告警。 */
+    @GetMapping("/reconciliation")
+    public Map<String, Object> reconciliation(HttpServletRequest r) {
+        if (!auth(r)) return denied();
+        return service.reconciliation();
+    }
+
     @PostMapping("/transactions/{xid}/retry")
     public Map<String, Object> retry(
             @PathVariable String xid,

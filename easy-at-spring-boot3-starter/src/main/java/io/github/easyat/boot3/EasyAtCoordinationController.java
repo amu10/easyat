@@ -4,6 +4,7 @@ import io.github.easyat.core.*;
 import io.github.easyat.spring.CoordinationService;
 import jakarta.servlet.http.*;
 import java.util.*;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -26,18 +27,22 @@ public final class EasyAtCoordinationController {
     }
 
     @PostMapping("/branches")
-    public Map<String, Object> register(
+    public ResponseEntity<Map<String, Object>> register(
             @RequestBody Map<String, String> body, HttpServletRequest r) {
         return service.register(headers(r), body);
     }
 
     @PostMapping("/branches/{branchId}/commit")
-    public Map<String, Object> commit(@PathVariable String branchId, HttpServletRequest r) {
+    public ResponseEntity<Map<String, Object>> commit(
+            @PathVariable String branchId, HttpServletRequest r) {
         return service.commit(headers(r), branchId);
     }
 
     @PostMapping("/branches/{branchId}/rollback")
-    public Map<String, Object> rollback(@PathVariable String branchId, HttpServletRequest r) {
-        return service.rollback(headers(r), branchId);
+    public ResponseEntity<Map<String, Object>> rollback(
+            @PathVariable String branchId,
+            @RequestBody(required = false) Map<String, String> body,
+            HttpServletRequest r) {
+        return service.rollback(headers(r), branchId, body);
     }
 }

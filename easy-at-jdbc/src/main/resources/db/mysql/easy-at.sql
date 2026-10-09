@@ -55,5 +55,8 @@ CREATE TABLE IF NOT EXISTS easy_at_branch (
   next_retry_at DATETIME(3) NULL DEFAULT NULL,
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL,
-  INDEX idx_easy_at_branch_xid (xid)
+  INDEX idx_easy_at_branch_xid (xid),
+  -- 同一资源在同一全局事务下只允许一条分支：空回滚占位、防悬挂、协调端点幂等全都依赖这个唯一性。
+  -- utf8mb4 下 (128+128)*4=1024 字节，远低于 InnoDB 单索引 3072 字节上限。
+  UNIQUE KEY uk_easy_at_branch_xid_resource (xid, resource_id)
 ) ENGINE=InnoDB;

@@ -1,6 +1,7 @@
 package io.github.easyat.storage.redis;
 
 import io.github.easyat.core.*;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,17 +52,38 @@ public final class RedisGlobalLockManager implements GlobalLockManager, AutoClos
         return prefix + ":lock:" + r + ":" + t + ":" + k;
     }
 
+    /**
+     * 加锁 Lua。
+     *
+     * <p><b>类型陷阱</b>：Redis 的 ARGV 一律是字符串。{@code lease_until} 存在 hash 里也是字符串，所以比较双方 必须都过 {@code
+     * tonumber}——否则 Lua 会抛 {@code attempt to compare number with string}。这个错误只会在 真实 Redis 上出现（任何
+     * mock/内存实现都不会暴露），且一旦出现，{@code eval} 抛出的是数据异常而不是 返回 0，调用方既拿不到锁也拿不到"冲突"语义。
+     */
     private static final String ACQUIRE_LUA =
-            "local key=KEYS[1]; local xid=ARGV[1]; local leaseUntil=ARGV[2]; local now=ARGV[3]; local pfx=ARGV[4];"
+            "local key=KEYS[1]; local xid=ARGV[1]; local leaseUntil=ARGV[2]; local now=tonumber(ARGV[3]); local pfx=ARGV[4];"
                     + "if redis.call('EXISTS',key)==0 then redis.call('HSET',key,'xid',xid,'lease_until',leaseUntil); redis.call('SADD',pfx..':lock:byXid:'..xid,key); return 1; end;"
                     + "local cur=redis.call('HGET',key,'xid'); local lease=tonumber(redis.call('HGET',key,'lease_until'));"
                     + "if cur==xid then redis.call('HSET',key,'lease_until',leaseUntil); return 1; end;"
-                    + "if lease<now then local status=redis.call('HGET',pfx..':global:'..cur,'status');"
+                    + "if lease~=nil and lease<now then local status=redis.call('HGET',pfx..':global:'..cur,'status');"
                     + " if status==false or status=='COMMITTED' or status=='ROLLED_BACK' or status=='MANUAL_INTERVENTION' or status=='DIRTY_WRITE' then"
                     + "  redis.call('DEL',key); redis.call('HSET',key,'xid',xid,'lease_until',leaseUntil); redis.call('SADD',pfx..':lock:byXid:'..xid,key); return 1; end; return 0; end; return 0;";
+
     private static final String RELEASE_LUA =
             "local set=KEYS[1]; local xid=ARGV[1]; local members=redis.call('SMEMBERS',set);"
                     + "for i=1,#members do local k=members[i]; if redis.call('HGET',k,'xid')==xid then redis.call('DEL',k); end; end; redis.call('DEL',set); return 1;";
+
+    /**
+     * 续租。写操作同样走 Lua：jedis 4.x 起 {@code hset} 返回基本类型 {@code long}，与 3.x 的 {@code Long}
+     * 描述符不同，直接调用会在运行期 {@code NoSuchMethodError}。
+     */
+    private static final String RENEW_LUA =
+            "if redis.call('HGET',KEYS[1],'xid')==ARGV[1] then"
+                    + " redis.call('HSET',KEYS[1],'lease_until',ARGV[2]); return 1; end; return 0;";
+
+    /** 唯一写入通道：{@code eval(String, List, List)} 在 jedis 3.8→6.0 上签名一致。 */
+    private static Object eval(Jedis j, String script, String[] keys, String[] args) {
+        return j.eval(script, Arrays.asList(keys), Arrays.asList(args));
+    }
 
     @Override
     public void acquire(String resource, String table, String key, String xid) {
@@ -99,14 +121,16 @@ public final class RedisGlobalLockManager implements GlobalLockManager, AutoClos
     private boolean tryAcquire(String k, String xid) {
         try (Jedis j = pool.getResource()) {
             Object res =
-                    j.eval(
+                    eval(
+                            j,
                             ACQUIRE_LUA,
-                            1,
-                            k,
-                            xid,
-                            String.valueOf(System.currentTimeMillis() + leaseMillis),
-                            String.valueOf(System.currentTimeMillis()),
-                            prefix);
+                            new String[] {k},
+                            new String[] {
+                                xid,
+                                String.valueOf(System.currentTimeMillis() + leaseMillis),
+                                String.valueOf(System.currentTimeMillis()),
+                                prefix
+                            });
             if ("1".equals(String.valueOf(res))) {
                 held.put(k, xid);
                 return true;
@@ -119,7 +143,7 @@ public final class RedisGlobalLockManager implements GlobalLockManager, AutoClos
     public void releaseByXid(String xid) {
         held.entrySet().removeIf(e -> e.getValue().equals(xid));
         try (Jedis j = pool.getResource()) {
-            j.eval(RELEASE_LUA, 1, prefix + ":lock:byXid:" + xid, xid);
+            eval(j, RELEASE_LUA, new String[] {prefix + ":lock:byXid:" + xid}, new String[] {xid});
         } catch (Exception ignored) {
         }
     }
@@ -131,9 +155,11 @@ public final class RedisGlobalLockManager implements GlobalLockManager, AutoClos
             String k = e.getKey();
             String myXid = e.getValue();
             try (Jedis j = pool.getResource()) {
-                String curXid = j.hget(k, "xid");
-                if (curXid != null && curXid.equals(myXid))
-                    j.hset(k, "lease_until", String.valueOf(now + leaseMillis));
+                eval(
+                        j,
+                        RENEW_LUA,
+                        new String[] {k},
+                        new String[] {myXid, String.valueOf(now + leaseMillis)});
             } catch (Exception ignored) {
             }
         }

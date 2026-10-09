@@ -4,6 +4,16 @@
 > 更新日期：2026-09-23  
 > 当前结论：P0（单服务投产底线）、P1（可运维上线）、P2（跨服务生产）以及 P3 中的 Redis 存储、加解密/脱敏 SPI 自动装配、WebClient 传播与管理 UI 均已完成实现，项目 `mvn clean compile` 全模块通过、JDBC 模块 H2 集成用例（含 codec SPI 单测）全绿。剩余缺口仅为部分 DML 能力（生成主键/批处理仍按设计拒绝）以及真实数据库/并发/故障注入测试（需 Docker + 真实实例，沙箱离线环境暂无法执行）。
 
+> **2026-10-09 更新（两轮）**
+>
+> 1. 修复 6 项会造成**静默数据不一致**的功能缺陷（空回滚、防悬挂、COMMITTING 黑洞、分支状态非 CAS、失败态被洗白、投递重试无上限），并为每条补了 H2 回归用例（见 [§12](#12-2026-10-09-已修复的生产阻断项)）。
+> 2. 补齐此前最大的验证缺口：**7 个故障注入点**（`FaultInjectionTest`）、**多实例并发恢复与锁竞争**（`ConcurrentRecoveryTest`）、
+>    以及**真实 MySQL / PostgreSQL / Redis 集成测试**（`easy-at-db-tests` 模块，`-Pdbtest`）。
+>    真实库验证当场暴露并修复了 3 个 H2 永远发现不了的生产缺陷，其中两个是"该功能在目标数据库上根本不可用"级别
+>    （详见 [§13](#13-2026-10-09-真实数据库验证暴露并修复的缺陷)）。
+>
+> 当前用例规模：**默认构建 59 个**（H2）+ **真实库 9 个**（`-Pdbtest`）。
+
 ## 0. 实现状态总览
 
 | 缺口 | 状态 | 关键实现 |
@@ -23,7 +33,7 @@
 | 6 管理 API 与审计 | ✅ 已实现 | `ManagementService` + `EasyAtManagementController`（`GET/POST transactions`、`retry`、`rollback`）、token 鉴权、审计、`DIRTY_WRITE` 诊断 |
 | 7.1/7.2 指标与 MDC | ✅ 已实现 | `EasyAtMetrics`（Micrometer）暴露活跃事务/提交/回滚/锁冲突/恢复队列/人工介入；`EasyAtMdcFilter` 注入 `xid`/`resourceId` |
 | 8 Redis 存储 | ✅ 已实现 | `RedisAtRepository`/`RedisBranchRepository`/`RedisGlobalLockManager`（Lua CAS、token/租约锁、恢复队列） |
-| P3 其余 / 9 测试 | ⚠️ 部分 | 生成主键/`executeBatch`/多表等仍按设计拒绝；MySQL/PostgreSQL/Redis Testcontainers 与并发/故障注入测试待补充（管理 UI 已实现，见 6；`UndoDataEncryptor`/`UndoDataMasker` SPI 已自动装配，见 2.5 / 3.4）|
+| P3 其余 / 9 测试 | ⚠️ 剩余 | 生成主键/`executeBatch`/多表等仍按设计拒绝；故障注入、多实例并发、真实 MySQL/PostgreSQL/Redis 测试均已补齐（见 §13）；jedis 3.8→6.0 兼容与 `easy_at_branch` 唯一约束已补齐（见 §14）。剩余：**分支注册未与业务本地事务同连接**（`PRODUCTION_GAPS.md §4.3`） |
 
 ## 1. 当前已经具备的能力
 
@@ -278,19 +288,20 @@ Redis 不是单服务投产的绝对前置条件；如果使用 JDBC，必须先
 
 ## 9. 测试缺口
 
-当前自动测试主要是 H2 单元/集成测试，还需要：
+> **2026-10-09 状态**：前 6 项已补齐（见 §13）。仍待补：
 
-- MySQL Testcontainers。
-- PostgreSQL Testcontainers。
-- Redis Testcontainers。
-- 多实例并发恢复测试。
-- 同一主键锁竞争和租约续期测试。
-- 写 undo 前后、DML 前后和提交前后的故障注入。
+- ~~MySQL Testcontainers。~~ ✅ `-Pdbtest`：`MysqlRealDatabaseIT`
+- ~~PostgreSQL Testcontainers。~~ ✅ `-Pdbtest`：`PostgresRealDatabaseIT`
+- ~~Redis Testcontainers。~~ ✅ `-Pdbtest`：`RedisRealStorageIT`
+- ~~多实例并发恢复测试。~~ ✅ `ConcurrentRecoveryTest`
+- ~~同一主键锁竞争和租约续期测试。~~ ✅ `ConcurrentRecoveryTest`
+- ~~写 undo 前后、DML 前后和提交前后的故障注入。~~ ✅ `FaultInjectionTest`（7 个注入点）
 - 网络超时、回调重复、服务重启测试。
 - 脏写、人工重试和幂等性测试。
 - 大字段、时间、二进制和特殊 JDBC 类型测试。
 - Starter 自动配置和多 DataSource 测试。
 - 性能、连接池压力和长事务测试。
+- 多实例**真实集群**下的故障注入（目前并发测试在单 JVM 多线程 + 独立 owner 层面，未做跨进程崩溃演练）。
 
 ## 10. 建议实施顺序
 
@@ -342,3 +353,126 @@ Redis 不是单服务投产的绝对前置条件；如果使用 JDBC，必须先
 - 无法接受人工数据修复的生产系统。
 
 完成 P0 并通过真实数据库、并发和故障注入测试后，才建议评估单服务小流量灰度；完成 P1/P2 后，才应评估跨服务生产部署。
+
+## 12. 2026-10-09 已修复的生产阻断项
+
+以下六项此前都会导致**静默的数据不一致**（既不报错、也不告警、还不收敛），现已修复并各配一条回归用例
+（`easy-at-spring/src/test/java/io/github/easyat/spring/BranchConsistencyTest.java`）。
+
+| # | 缺陷 | 修复前后果 | 修复位置 |
+|---|---|---|---|
+| 1 | **空回滚缺失**：协调者对尚未注册的分支发 rollback 时 `orElseThrow` | 分支回调按退避无限重试，永不收敛、永不进人工介入 | `BranchCoordinator#emptyRollback` 落 `ROLLED_BACK` 占位记录，回滚幂等成功 |
+| 2 | **防悬挂缺失**：注册分支不检查是否已被回滚；`join()` 不校验全局状态 | rollback 先到 / 超时回滚后迟到的请求照样执行 DML 并本地提交，undo 挂在终态 XID 下 → **永久悬挂数据** | `DefaultBranchRegistrar#register`、`BranchCoordinator#register` 拒绝已回滚资源；`AtTransactionManager#join` 只接受 ACTIVE；`append` 写 undo 前二次校验 |
+| 3 | **COMMITTING 黑洞**：`ACTIVE→COMMITTING→COMMITTED` 第二步失败后事务不在恢复集合 | 事务永久残留、**全局锁泄漏**，且无法转入人工介入（状态机不允许） | `AtStatus` 放行 `COMMITTING→MANUAL_INTERVENTION`；新增 `AtTransactionManager#finishCommit`；三个 `AtRepository#recoverable` 纳入 COMMITTING；`AtRecoveryScheduler` 按状态分派 |
+| 4 | **分支状态非 CAS**：`mark()` 无条件 `save()` 覆盖，状态机与 `transition` 是死代码 | 并发恢复/投递互相覆盖，丢失"谁推进过"的事实 | `BranchCoordinator#advance` 全部改用 `BranchRepository#transition` CAS，并把 `BranchStatus` 迁移表补齐（新增 `MANUAL_INTERVENTION`） |
+| 5 | **失败态被洗白**：`ROLLBACK_FAILED` 非终态，可被乱序 commit 置为 `COMMITTED` | 回滚失败被静默固化成"已提交"，不再重试 | `BranchCoordinator#actExisting` 阻止非 `COMMITTED` 合法前驱被提升为 `COMMITTED` |
+| 6 | **投递重试无上限**：`BranchRetryScheduler` 无 `maxRetries`，`finally` 还会把 `MANUAL_INTERVENTION` 拉回 `ROLLING_BACK` | 长期失败的分支无限重试；人工介入标记被抹掉 | 重试耗尽转 `MANUAL_INTERVENTION` 并计入 Micrometer 指标；恢复 `finally` 跳过人工态；`drive` 改为逆序回滚 + 单分支异常隔离 |
+
+配套调整（顺带修正的语义问题）：
+
+- **协调端点返回真实 HTTP 状态码**：`CoordinationService` 鉴权失败返回 401、参数错误 400、命中防悬挂返回 409。
+  此前错误用 HTTP 200 + `{"error":...}` 返回，会被 `deliverRemote` 判为"回滚成功"。
+- **`BranchRepository#findByXidResource`**（default 方法）：按 `(xid, resourceId)` 唯一定位分支，是空回滚与防悬挂的共同前提。
+- ~~**`easy_at_branch` 无 `(xid, resource_id)` 唯一约束**~~ —— **已补齐（见 §14.2）**：建表脚本加
+  `UNIQUE KEY`、提供去重迁移脚本、三处存储（Jdbc/Redis/File）的 `register` 改为幂等。
+
+### 修复后仍未做（真实数据库验证缺失）
+
+这六项修复**只在 H2 上验证过**。上线前仍需完成 [§9](#9-测试缺口) 中剩余项。**没有这些，"正确"仍只是代码层面的推断。**
+
+## 13. 2026-10-09 真实数据库验证暴露并修复的缺陷
+
+补齐验证（故障注入 + 并发 + 真实库）后，当场发现 **4 个缺陷**。其中前两个的严重程度是
+"该功能在目标数据库上根本不可用"，而它们在 H2 上**永远不会被发现**——这正是补齐验证的意义。
+
+### 13.1 PostgreSQL 上回滚 100% 失败（P0，已修复）
+
+- **现象**：`PSQLException: ERROR: operator does not exist: bigint = character varying`，
+  发生在 `JdbcUndoExecutor#assertNoDirtyWrite`。
+- **根因**：`easy_at_undo_log.pk_value` 是 `VARCHAR` 列，`JdbcAtRepository` 读回时统一用 `getString`，
+  所以**无论业务主键原本是什么类型，取回来一律是 String**。原先统一用 `setObject` 绑定，
+  PostgreSQL 驱动把该值当 `varchar` 发送，于是 `WHERE id=?` 变成 `bigint = character varying`。
+- **为何 H2/MySQL 掩盖**：两者都做隐式类型转换，不报错。
+- **修复**：`JdbcUndoExecutor` 新增 `bind()`（按实际 Java 类型选择 setter）与 `coerce()`
+  （读列元数据把 String 还原为列本身的类型，结果按 `表.列` 缓存）。
+- **回归**：`PostgresRealDatabaseIT#fullAtRoundTripWithRollback`、
+  `#undoRestoresEveryColumnIncludingStrings`。
+
+### 13.2 Redis 全局锁 Lua 类型错误（P0，已修复）
+
+- **现象**：`JedisDataException: ERR user_script: attempt to compare number with string`，
+  `eval` 直接抛异常——调用方既拿不到锁，也拿不到"冲突"语义。
+- **根因**：`ACQUIRE_LUA` 中 `lease` 经 `tonumber()` 是数字，而 `now` 直接取自 `ARGV[3]` 是字符串
+  （Redis 的 ARGV 一律是字符串），Lua 不允许数字与字符串比较。
+- **为何之前没发现**：Redis 路径此前只有 1 个自动配置冒烟用例，Lua 逻辑从未在真实 Redis 上执行过。
+- **修复**：`now=tonumber(ARGV[3])`，并对 `lease` 增加 `nil` 保护。
+- **回归**：`RedisRealStorageIT#globalLockIsMutuallyExclusive`。
+
+### 13.3 jedis 版本二进制不兼容（P1，**已修复**）
+
+- **现象**：`NoSuchMethodError: java.lang.Long redis.clients.jedis.Jedis.hset(String, Map)`。
+- **根因**：写命令（`hset`/`sadd`/`del`/`exists`）在 jedis 3.x 返回包装类型 `Long`/`Boolean`，
+  从 **4.x 起改成基本类型** `long`/`boolean`。JVM 方法描述符含返回类型，于是"按 3.8 编译、跑在 4+ 上"
+  必然抛 `NoSuchMethodError`——反向也一样。
+- **难点**：使用者说了算，我们控制不了运行期版本。**Spring Boot 2.7 的 BOM 管 jedis 3.8.0，
+  Spring Boot 3.5 的 BOM 管 jedis 6.0.0**，`dependencyManagement` 会覆盖本模块声明的版本。
+- **修复（不是升版本号就完事）**：把 Redis 模块改成**只调用跨 3.8→6.0 签名稳定的 API**——
+  - 写：全部走 `eval(String, List<String>, List<String>)`，HSET/SADD/DEL/SETNX 都写进 Lua；
+  - 读：只用 `hget` / `hgetAll` / `smembers` / `get`（返回类型从未变过）。
+  - 编译版本升到 **4.4.6**；因此无论使用者被 BOM 换成 3.8 还是 6.0，字节码都能解析。
+- **验证**：`easy-at-db-tests` 新增 `-Pjedis3 / -Pjedis5 / -Pjedis6` 三个 profile，
+  在**本地真实 Redis** 上分别跑 `RedisRealStorageIT`：
+  **jedis 3.8.0 / 4.4.6 / 5.2.0 / 6.0.0 四档各 3/3 全绿**（见 §14）。
+
+### 13.4 并发回滚重复补偿 → 假性 DIRTY_WRITE（P1，已修复）
+
+- **现象**：多实例并发恢复同一事务时，最终状态是 `DIRTY_WRITE` 而非 `ROLLED_BACK`；
+  数据其实已正确回滚，却被标记为"需人工介入"。
+- **根因**：`AtTransactionManager#rollback` 中
+  `if (tx.getStatus() != ROLLING_BACK && !transition(tx, ROLLING_BACK))` ——
+  当状态**已经是 `ROLLING_BACK`** 时短路为 false，**直接跳过 CAS 进入补偿循环**；
+  两个执行者并发跑同一条 undo，后到的脏写校验看到"当前行 ≠ after image"（其实是被同伴改的）。
+- **真实触发场景**：长回滚期间租约过期、另一实例接管。
+- **修复**：新增 `enterRollback` / `exitRollback` 两道互斥——
+  单 JVM 内用 `rollbackInFlight` 集合拦住并发线程；跨实例用恢复租约
+  （同 owner 可重入，保证 `AtRecoveryScheduler` 抢租约后仍能驱动回滚；他人持有且未过期则拒绝；
+  租约过期允许接管，保证持有者崩溃后仍有人推进）。装配上把 `owner` 传给 `AtTransactionManager`，
+  与调度器保持一致。
+- **回归**：`ConcurrentRecoveryTest#concurrentRecoveryAcrossInstancesCompensatesOnce`
+  （已做反向验证：临时移除互斥后该用例立即变红，证明它确有捕获能力）。
+
+## 14. 2026-10-09 投产三项遗留问题的收口
+
+### 14.1 jedis 版本兼容（原 §13.3，已修）
+
+见 §13.3。核心是"用签名稳定的 API"而不是"挑一个版本编译"——因为运行期版本由使用者的 BOM 决定。
+
+### 14.2 `easy_at_branch` 的 (xid, resource_id) 唯一约束（已补）
+
+| 层 | 改动 |
+|---|---|
+| 建表脚本 | MySQL `UNIQUE KEY uk_easy_at_branch_xid_resource`；PostgreSQL `CREATE UNIQUE INDEX`（(128+128)×4=1024 字节，低于 InnoDB 3072 上限） |
+| 迁移脚本 | `db/{mysql,postgresql}/migration/v0.1.2__branch_unique.sql`：先按 `(xid, resource_id)` 去重（保留 `branch_id` 最小的一条），再加约束 |
+| `JdbcBranchRepository` | `register` 先查 `findByXidResource`，命中即幂等返回；INSERT 冲突时按 SQLState `23xxx` / 错误码 1062·2601·2627 兜住并发窗口。并 override `findByXidResource` 走索引 |
+| `RedisBranchRepository` | 新增 `branch:uniq:<xid>:<resource_id>` 索引键，注册走 `SETNX` 抢占；抢占失败即幂等返回，不覆盖、不重复建索引 |
+| `FileBranchRepository` | `register` 在写锁内先扫一遍同 `(xid, resource_id)`，已存在则幂等返回 |
+| 回归 | `ReconciliationTest#detectsDuplicateBranchRegistrationAsIdempotent`（H2，含 UNIQUE 约束） |
+
+### 14.3 影子运行对账与人工修复入口（已实现）
+
+- `ReconciliationReport` / `ReconciliationService`（`easy-at-core`）：只依赖
+  `AtRepository` + `BranchRepository` + `GlobalLockManager`，三种存储通用。
+- 检测项：超时未收敛的 ACTIVE、无有效租约的 ROLLING_BACK、COMMITTING 黑洞、ROLLBACK_FAILED、
+  DIRTY_WRITE、**MANUAL_INTERVENTION 计数**、**锁泄漏**、跨服务的分支悬挂。
+  级别：`CRITICAL`（人工介入/脏写/锁泄漏/悬挂）> `WARN`（残留）> `OK`。
+- 锁全量快照：`GlobalLockManager#heldLocks()`（默认空），`JdbcGlobalLockManager` 已实现；
+  Redis 侧因 SCAN 难以跨 jedis 版本稳定调用，改用运维手册里的 `redis-cli --scan` 片段。
+- 三个入口：
+  1. 管理端点 `GET /_easy-at/v1/reconciliation`（boot2/boot3 均已接线，`RUNBOOK.md`）。
+  2. 独立 CLI `io.github.easyat.jdbc.ReconciliationCli <jdbc-url> [user] [password]`（退出码 0/2/1，可直接挂 cron）。
+  3. 纯 SQL：`db/{mysql,postgresql}/reconciliation.sql`（7 段查询 + 汇总计数，DBA 直接跑）。
+- 人工修复入口：管理端点 `GET /transactions/{xid}`、`POST /transactions/{xid}/retry`、
+  `POST /transactions/{xid}/rollback`、`GET /audit`；UI `/_easy-at/v1/ui`。
+  逐场景修复流程（MANUAL_INTERVENTION / DIRTY_WRITE / 锁泄漏）与灰度阶段表见 `RUNBOOK.md`。
+- 回归：`ReconciliationTest` 6 个用例——干净环境必须报 OK，五种异常各自必须被抓到
+  （防止"对账永远返回健康"这种假绿）。

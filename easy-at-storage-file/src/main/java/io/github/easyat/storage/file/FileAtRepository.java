@@ -61,6 +61,8 @@ public final class FileAtRepository implements AtRepository {
                 if (tx != null
                         && ((tx.getStatus() == AtStatus.ACTIVE && tx.getDeadline() <= now)
                                 || tx.getStatus() == AtStatus.ROLLING_BACK
+                                // COMMITTING：本地已提交但全局未收敛，必须继续推进，否则永久残留
+                                || tx.getStatus() == AtStatus.COMMITTING
                                 || tx.getStatus() == AtStatus.ROLLBACK_FAILED)
                         && tx.getNextRetryAt() <= now) out.add(tx);
                 if (out.size() >= limit) break;

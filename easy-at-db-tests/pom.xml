@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>io.github.amu10</groupId>
+    <artifactId>easy-at-parent</artifactId>
+    <version>0.1.1</version>
+  </parent>
+  <name>easy-at-db-tests</name>
+  <description>
+    Integration tests against real MySQL / PostgreSQL / Redis instances.
+    Deliberately EXCLUDED from the default reactor: it needs Docker or an external database,
+    so nothing here may break `mvn verify` for normal contributors. Activate with -Pdbtest.
+  </description>
+  <artifactId>easy-at-db-tests</artifactId>
+
+  <properties>
+    <maven.deploy.skip>true</maven.deploy.skip>
+    <testcontainers.version>1.21.4</testcontainers.version>
+    <!-- 与 easy-at-storage-redis 的编译版本一致；用 -Pjedis5 / -Pjedis6 覆盖做兼容性验证 -->
+    <jedis.version>4.4.6</jedis.version>
+  </properties>
+
+  <profiles>
+    <profile>
+      <id>jedis3</id>
+      <properties>
+        <jedis.version>3.8.0</jedis.version>
+      </properties>
+    </profile>
+    <profile>
+      <id>jedis5</id>
+      <properties>
+        <jedis.version>5.2.0</jedis.version>
+      </properties>
+    </profile>
+    <profile>
+      <id>jedis6</id>
+      <properties>
+        <jedis.version>6.0.0</jedis.version>
+      </properties>
+    </profile>
+  </profiles>
+
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!--
+            surefire 默认只匹配 *Test.java，而本模块的用例以 IT 结尾（它们是集成测试）。
+            不显式声明 includes 的话，这些用例会被静默跳过、"什么都不跑"却显示 BUILD SUCCESS。
+          -->
+          <includes>
+            <include>**/*IT.java</include>
+            <include>**/*Test.java</include>
+          </includes>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>testcontainers-bom</artifactId>
+        <version>${testcontainers.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <dependency>
+      <groupId>io.github.amu10</groupId>
+      <artifactId>easy-at-jdbc</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.github.amu10</groupId>
+      <artifactId>easy-at-storage-redis</artifactId>
+      <version>${project.version}</version>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- Real drivers. Versions are pinned to what the offline local repository already has. -->
+    <dependency>
+      <groupId>com.mysql</groupId>
+      <artifactId>mysql-connector-j</artifactId>
+      <version>8.4.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>42.7.10</version>
+      <scope>test</scope>
+    </dependency>
+    <!--
+      jedis 版本可用 -Pjedis5 / -Pjedis6 切换，用来验证 easy-at-storage-redis 的字节码在不同 jedis
+      版本上都能解析（Spring Boot 2.7 的 BOM 管 3.8.0，Spring Boot 3.5 的 BOM 管 6.0.0）。
+      默认与 easy-at-storage-redis 的编译版本一致。
+    -->
+    <dependency>
+      <groupId>redis.clients</groupId>
+      <artifactId>jedis</artifactId>
+      <version>${jedis.version}</version>
+      <scope>test</scope>
+    </dependency>
+
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>testcontainers</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>mysql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

@@ -3,7 +3,7 @@
 正式坐标：
 
 ```text
-io.github.amu10:easy-at-parent:0.1.0
+io.github.amu10:easy-at-parent:0.1.1
 ```
 
 示例应用 `easy-at-example-boot3` 已从发布反应器移除（根 pom `<modules>` 不再包含它），不会随父工程发布；需单独构建时用 `mvn -pl easy-at-example-boot3 -am`。其余 7 个库模块随父工程一起发布。
@@ -14,13 +14,14 @@ io.github.amu10:easy-at-parent:0.1.0
 
 | 检查项                               | 要求                                          | 当前状态             |
 | --------------------------------- | ------------------------------------------- | ---------------- |
-| `version`                         | 必须是**非 SNAPSHOT**（Central 拒收 SNAPSHOT）      | ✅ `0.1.0`        |
+| `version`                         | 必须是**非 SNAPSHOT**（Central 拒收 SNAPSHOT）      | ✅ `0.1.1`        |
 | `groupId` 命名空间                    | `io.github.amu10` 必须归你所有（GitHub 账号 `amu10`） | ⚠️ 需你在 Portal 验证 |
-| 代码状态                              | 已提交、已打 `v0.1.0` 标签、工作区干净                    | 你确认              |
+| 代码状态                              | 已提交、已打 `v0.1.1` 标签、工作区干净                    | 你确认              |
 | GPG                               | 本机已装 GnuPG 且有发布密钥                           | ✅ v2.5.24 已装；主钥 `F8906A3147516888` [SC] 已生成并推送 keyserver（待回拉确认） |
 | `settings.xml` 的 `central` server | 必须存在且填真实 Token                              | ✅ 已加模板（env 占位）   |
 
-> ⚠️ **正式版本不可覆盖**：`0.1.0` 一旦 Publish 就永久占用，发布前务必确认代码冻结。
+> ⚠️ **正式版本不可覆盖**：`0.1.1` 一旦 Publish 就永久占用，发布前务必确认代码冻结。
+> 历史版本：`0.1.0` 已发布（2026-09-28），不可重发/覆盖，故本次升为 `0.1.1`。
 
 ---
 
@@ -152,7 +153,7 @@ mvn clean deploy -Prelease
 
 - `central-publishing-maven-plugin` 配置为 `autoPublish=false`：命令成功只会上传并校验部署，**不会立即公开**。
 - 登录 Central Portal → **Deployments**，检查组件、签名、坐标、依赖。
-- 确认无误后点击 **Publish**。`io.github.amu10:easyAt:0.1.0` 即正式进入 Maven Central（通常几分钟内可在 search.maven.org 搜到）。
+- 确认无误后点击 **Publish**。`io.github.amu10:easyAt:0.1.1` 即正式进入 Maven Central（通常几分钟内可在 search.maven.org 搜到）。
 
 ---
 
@@ -164,7 +165,7 @@ mvn clean deploy -Prelease
 | GPG 卡在交互输入口令                               | 没给 Maven 口令。设 `GPG_PASSPHRASE` 环境变量（已配 `gpg.passphrase` server）。                                                |
 | `gpg: signing failed: Inappropriate ioctl` | Windows 终端无 pinentry。设 `export GPG_TTY=$(tty)` 或用 `-Dgpg.passphrase=` 绕过交互。                                     |
 | 上传后 Portal 报命名空间未验证                        | `io.github.amu10` 必须先在 Namespaces 验证通过。                                                                         |
-| 发布后想改 `0.1.0`                              | **不行**，正式版不可覆盖。只能发 `0.1.1`。                                                                                     |
+| 发布后想改 `0.1.1`                              | **不行**，正式版不可覆盖。只能发 `0.1.2`。                                                                                     |
 | `mirrorOf=central` 指向私服是否影响发布              | 不影响。`central-publishing-maven-plugin` 直连 `api.central.sonatype.com`，只用 `server id=central` 的凭据，不走 Maven 仓库镜像解析。 |
 | 部署后在 Portal 报签名无法验证 / key not found       | 公钥没真正上到 keyserver。重跑 `--send-keys` 并确认出现 `gpg: success`；必要时多推几个 keyserver（ubuntu / openpgp.org）。              |
 | `Project name is missing`（每个模块都报）           | Central 校验的是**子模块原始 pom**，不读继承值。每个子模块必须自带 `name`/`description`/`url`/`licenses`/`scm`/`developers`。已为 7 个库模块补齐。 |

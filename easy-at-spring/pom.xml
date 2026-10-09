@@ -4,7 +4,7 @@
   <parent>
     <groupId>io.github.amu10</groupId>
     <artifactId>easy-at-parent</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
   </parent>
   <name>easy-at-spring</name>
   <description>Spring integration for easy-at: AOP aspect, management endpoints and context propagation.</description>
@@ -20,7 +20,7 @@
     <connection>scm:git:https://github.com/amu10/easyat.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/amu10/easyat.git</developerConnection>
     <url>https://github.com/amu10/easyat</url>
-    <tag>v0.1.0</tag>
+    <tag>v0.1.1</tag>
   </scm>
   <developers>
     <developer>
@@ -96,6 +96,18 @@
       <artifactId>slf4j-api</artifactId>
       <version>1.7.36</version>
       <scope>provided</scope>
+    </dependency>
+    <!-- 分支层一致性测试：用 H2 验证空回滚/防悬挂/CAS 的真实 SQL 行为 -->
+    <dependency>
+      <groupId>com.h2database</groupId>
+      <artifactId>h2</artifactId>
+      <version>2.2.224</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>

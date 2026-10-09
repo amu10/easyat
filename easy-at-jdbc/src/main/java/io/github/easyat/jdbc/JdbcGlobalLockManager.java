@@ -2,6 +2,8 @@ package io.github.easyat.jdbc;
 
 import io.github.easyat.core.*;
 import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -114,6 +116,31 @@ public final class JdbcGlobalLockManager implements GlobalLockManager, AutoClose
             p.executeUpdate();
         } catch (SQLException e) {
             throw new AtException("Cannot release JDBC locks", e);
+        }
+    }
+
+    /** 全量快照锁表。对账据此判断"锁泄漏"——锁还在、但所属事务已终态或已不存在， 这种锁会永久拒绝其他事务访问同一行，且不会有任何告警。 */
+    @Override
+    public List<GlobalLockRef> heldLocks() {
+        List<GlobalLockRef> out = new ArrayList<GlobalLockRef>();
+        try (Connection c = dataSource.getConnection();
+                PreparedStatement p =
+                        c.prepareStatement(
+                                "SELECT resource_id,table_name,pk_value,xid,lease_until FROM easy_at_lock");
+                ResultSet rs = p.executeQuery()) {
+            while (rs.next()) {
+                Timestamp lease = rs.getTimestamp(5);
+                out.add(
+                        new GlobalLockRef(
+                                rs.getString(1),
+                                rs.getString(2),
+                                rs.getString(3),
+                                rs.getString(4),
+                                lease == null ? 0L : lease.getTime()));
+            }
+            return out;
+        } catch (SQLException e) {
+            throw new AtException("Cannot snapshot JDBC global locks", e);
         }
     }
 

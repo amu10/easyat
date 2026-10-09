@@ -10,6 +10,7 @@ import java.nio.file.Paths;
 import java.util.Map;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.*;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -108,7 +109,17 @@ public class EasyAtAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     AtTransactionManager easyAtManager(AtRepository r, UndoExecutor u, GlobalLockManager l) {
-        return new AtTransactionManager(r, u, l, props.getRecovery().getMaxRetries());
+        // owner 必须与 AtRecoveryScheduler 一致：调度器先抢租约再驱动回滚，同 owner 才可重入。
+        // 回滚期用一份独立的（更长）租约，避免长补偿过程中被误判过期而遭他人接管。
+        return new AtTransactionManager(
+                r,
+                u,
+                l,
+                props.getRecovery().getMaxRetries(),
+                owner,
+                Math.max(
+                        props.getRecovery().getLease().toMillis(),
+                        AtTransactionManager.DEFAULT_ROLLBACK_LEASE_MILLIS));
     }
 
     @Bean
@@ -180,15 +191,32 @@ public class EasyAtAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
+    ReconciliationService reconciliationService(
+            AtRepository r,
+            @Autowired(required = false) BranchRepository branches,
+            GlobalLockManager locks) {
+        return new ReconciliationService(
+                r, branches, locks, props.getApplicationName(), 60000L, 1000);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
     ManagementService managementService(
-            AtRepository r, AtTransactionManager m, EasyAtMetrics metrics, UndoDataCodec codec) {
-        return new ManagementService(
-                r,
-                m,
-                metrics,
-                props.getManagement().isEnabled(),
-                props.getManagement().getToken(),
-                codec);
+            AtRepository r,
+            AtTransactionManager m,
+            EasyAtMetrics metrics,
+            UndoDataCodec codec,
+            ReconciliationService reconciliation) {
+        ManagementService s =
+                new ManagementService(
+                        r,
+                        m,
+                        metrics,
+                        props.getManagement().isEnabled(),
+                        props.getManagement().getToken(),
+                        codec);
+        s.setReconciliationService(reconciliation);
+        return s;
     }
 
     @Bean(destroyMethod = "close")
@@ -225,13 +253,15 @@ public class EasyAtAutoConfiguration {
             havingValue = "true",
             matchIfMissing = true)
     BranchRetryScheduler branchRetryScheduler(
-            BranchRepository branches, BranchCoordinator coordinator) {
+            BranchRepository branches, BranchCoordinator coordinator, EasyAtMetrics metrics) {
         BranchRetryScheduler s =
                 new BranchRetryScheduler(
                         branches,
                         coordinator,
                         props.getRecovery().getInterval().toMillis(),
-                        props.getRecovery().getBatchSize());
+                        props.getRecovery().getBatchSize(),
+                        props.getRecovery().getMaxRetries(),
+                        metrics);
         s.start();
         return s;
     }

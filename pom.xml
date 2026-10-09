@@ -3,7 +3,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.amu10</groupId>
   <artifactId>easy-at-parent</artifactId>
-  <version>0.1.0</version>
+  <version>0.1.1</version>
   <packaging>pom</packaging>
   <name>easyAt</name>
   <description>Embedded AT transaction framework for Spring Boot</description>
@@ -26,7 +26,7 @@
     <connection>scm:git:https://github.com/amu10/easyat.git</connection>
     <developerConnection>scm:git:ssh://git@github.com/amu10/easyat.git</developerConnection>
     <url>https://github.com/amu10/easyat</url>
-    <tag>v0.1.0</tag>
+    <tag>v0.1.1</tag>
   </scm>
   <modules>
     <module>easy-at-core</module>
@@ -139,6 +139,14 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-gpg-plugin</artifactId>
             <version>3.2.7</version>
+            <configuration>
+              <!--
+                显式指定 GnuPG：Git Bash 的 PATH 里 C:\Program Files\Git\usr\bin\gpg.exe (2.4.9)
+                排在前面，该版本缺 keyboxd 会报 "can't connect to the keyboxd" 导致签名失败。
+                真正的密钥在 C:\Users\<user>\AppData\Roaming\gnupg（GnuPG 2.5.24 的家目录）。
+              -->
+              <executable>C:/Program Files/GnuPG/bin/gpg.exe</executable>
+            </configuration>
             <executions>
               <execution>
                 <id>sign-release-artifacts</id>
@@ -157,12 +165,25 @@
             <configuration>
               <publishingServerId>central</publishingServerId>
               <autoPublish>false</autoPublish>
-              <deploymentName>io.github.amu10:easyAt:0.1.0</deploymentName>
+              <deploymentName>io.github.amu10:easyAt:0.1.1</deploymentName>
               <skipPublishing>${maven.deploy.skip}</skipPublishing>
             </configuration>
           </plugin>
         </plugins>
       </build>
+    </profile>
+    <profile>
+      <!--
+        真实 MySQL / PostgreSQL / Redis 集成测试模块（easy-at-db-tests）。
+
+        默认<b>不</b>启用：它需要 Docker（Testcontainers）或一个外部真实实例，既不能成为普通
+        `mvn verify` 的构建负担，也不该在没有 Docker 的环境里让构建变红。
+        Maven 中 profile 的 <modules> 会与基础 <modules> 合并，因此这里只需追加该模块。
+      -->
+      <id>dbtest</id>
+      <modules>
+        <module>easy-at-db-tests</module>
+      </modules>
     </profile>
   </profiles>
 </project>

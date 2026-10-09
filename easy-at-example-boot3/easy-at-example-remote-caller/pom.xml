@@ -4,7 +4,7 @@
   <parent>
     <groupId>io.github.amu10</groupId>
     <artifactId>easy-at-example-boot3</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
   </parent>
   <artifactId>easy-at-example-remote-caller</artifactId>
   <name>easyAt Remote Transaction Example - Caller (order-service)</name>

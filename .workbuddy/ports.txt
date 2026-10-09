@@ -1,0 +1,9 @@
+
+LocalAddress LocalPort Proc              
+------------ --------- ----              
+::1               3306 wslrelay          
+::                3306 com.docker.backend
+::1               6379 wslrelay          
+::                6379 com.docker.backend
+
+

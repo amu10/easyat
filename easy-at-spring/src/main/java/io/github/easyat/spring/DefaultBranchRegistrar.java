@@ -1,7 +1,7 @@
 package io.github.easyat.spring;
 
 import io.github.easyat.core.*;
-import java.util.List;
+import java.util.Optional;
 import java.util.function.Supplier;
 import org.slf4j.MDC;
 
@@ -24,10 +24,20 @@ public final class DefaultBranchRegistrar implements BranchRegistrar {
     public void register(String xid, String resourceId) {
         BranchRepository repo = repository.get();
         if (repo == null) return;
-        List<AtBranch> existing = repo.byXid(xid);
-        for (AtBranch b : existing)
-            if (b.getResourceId().equals(resourceId)) return; // already registered
-        repo.register(new AtBranch(xid, resourceId, appName, null, existing.size() + 1));
+        Optional<AtBranch> existing = repo.findByXidResource(xid, resourceId);
+        if (existing.isPresent()) {
+            // 防悬挂（Anti-hanging）：rollback 先于本次 DML 到达时，占位记录已把本资源标记为已回滚。
+            // 此时必须拒绝执行——否则这次 DML 产生的 undo 会挂在一个已终结的全局事务下，
+            // 既不会被回滚，也不会被告警，成为永久的悬挂数据。
+            if (existing.get().getStatus().isRolledBack())
+                throw new AtException(
+                        "Rejected DML on already-rolled-back branch: xid="
+                                + xid
+                                + " resource="
+                                + resourceId);
+            return; // already registered
+        }
+        repo.register(new AtBranch(xid, resourceId, appName, null, repo.byXid(xid).size() + 1));
         MDC.put("easyAtResourceId", resourceId);
     }
 }

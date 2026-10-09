@@ -10,6 +10,24 @@ import redis.clients.jedis.JedisPool;
  * Redis-backed global transaction store. Status changes use a Lua compare-and-set on status+version
  * so multiple recovery instances cannot advance the same transaction concurrently. Recovery
  * ownership and the recovery scan use per-status sets.
+ *
+ * <h2>为什么所有写操作都走 Lua</h2>
+ *
+ * <p>jedis 的<strong>写</strong>命令在版本间改过返回值类型：{@code hset/sadd/del/exists} 在 3.x 返回 {@code
+ * Long}/{@code Boolean}，从 4.x 起改成了基本类型 {@code long}/{@code boolean}。 JVM 的方法描述符包含返回类型，所以"按 3.8
+ * 编译、跑在 4/5/6 上"会抛 {@code NoSuchMethodError}——反之亦然。
+ *
+ * <p>而 Spring Boot 2.7 的 BOM 管理 jedis <b>3.8.0</b>、Spring Boot 3.5 的 BOM 管理 jedis <b>6.0.0</b>；使用者的
+ * dependencyManagement 会覆盖本模块声明的版本，我们无法控制运行期是哪一个。
+ *
+ * <p>因此本类只调用<b>跨 3.8→6.0 签名完全一致</b>的方法：
+ *
+ * <ul>
+ *   <li>写：一律 {@code eval(String, List<String>, List<String>)}（Lua 脚本内执行 HSET/SADD/DEL）
+ *   <li>读：{@code hget} / {@code hgetAll} / {@code smembers}（返回类型从未变过）
+ * </ul>
+ *
+ * 这样无论按哪个版本编译、运行期是哪一版，字节码都能解析。
  */
 public final class RedisAtRepository implements AtRepository {
     private final JedisPool pool;
@@ -42,6 +60,36 @@ public final class RedisAtRepository implements AtRepository {
         return prefix + ":undo:" + xid + ":" + undoId;
     }
 
+    /** 唯一的写入通道：只使用签名稳定的 {@code eval(String, List, List)}。 */
+    private static Object eval(Jedis j, String script, String[] keys, String[] args) {
+        return j.eval(script, Arrays.asList(keys), Arrays.asList(args));
+    }
+
+    private static final String CREATE_LUA =
+            "redis.call('HSET', KEYS[1],"
+                    + " 'name',ARGV[1], 'status',ARGV[2], 'timeout_at',ARGV[3], 'retry_count',ARGV[4],"
+                    + " 'next_retry_at',ARGV[5], 'version',ARGV[6], 'owner',ARGV[7], 'lease_until',ARGV[8],"
+                    + " 'created_at',ARGV[9], 'updated_at',ARGV[10]);"
+                    + "redis.call('SADD', KEYS[2], ARGV[11]);"
+                    + "return 1;";
+
+    /** 清空该事务的 undo 索引。save() 是整体重写，不增量合并。 */
+    private static final String CLEAR_UNDO_LUA = "return redis.call('DEL', KEYS[1]);";
+
+    private static final String WRITE_UNDO_LUA =
+            "redis.call('DEL', KEYS[1]);"
+                    + "redis.call('HSET', KEYS[1],"
+                    + " 'resource_id',ARGV[1], 'table_name',ARGV[2], 'pk_name',ARGV[3], 'pk_value',ARGV[4],"
+                    + " 'rollback_sql',ARGV[5], 'rollback_params',ARGV[6], 'status',ARGV[7]);"
+                    + "if ARGV[8] ~= '' then redis.call('HSET', KEYS[1], 'before_image', ARGV[8]); end;"
+                    + "if ARGV[9] ~= '' then redis.call('HSET', KEYS[1], 'after_image', ARGV[9]); end;"
+                    + "redis.call('SADD', KEYS[2], ARGV[10]);"
+                    + "return 1;";
+
+    private static final String UPDATE_RECOVERY_LUA =
+            "redis.call('HSET', KEYS[1], 'retry_count',ARGV[1], 'next_retry_at',ARGV[2],"
+                    + " 'updated_at',ARGV[3]); return 1;";
+
     private static final String TRANSITION_LUA =
             "local key=KEYS[1]; local oldSet=KEYS[2]; local newSet=KEYS[3];"
                     + "local xid=ARGV[1]; local expected=ARGV[2]; local expectedVer=ARGV[3]; local nextStatus=ARGV[4]; local now=ARGV[5];"
@@ -64,20 +112,24 @@ public final class RedisAtRepository implements AtRepository {
     @Override
     public void create(AtTransaction tx) {
         try (Jedis j = pool.getResource()) {
-            Map<String, String> m = new HashMap<String, String>();
-            m.put("name", tx.getName());
-            m.put("status", tx.getStatus().name());
-            m.put("timeout_at", String.valueOf(tx.getDeadline()));
-            m.put("retry_count", "0");
-            m.put("next_retry_at", "0");
-            m.put("version", "0");
-            m.put("owner", "");
-            m.put("lease_until", "0");
             long now = System.currentTimeMillis();
-            m.put("created_at", String.valueOf(now));
-            m.put("updated_at", String.valueOf(now));
-            j.hset(gkey(tx.getXid()), m);
-            j.sadd(statusSet(tx.getStatus().name()), tx.getXid());
+            eval(
+                    j,
+                    CREATE_LUA,
+                    new String[] {gkey(tx.getXid()), statusSet(tx.getStatus().name())},
+                    new String[] {
+                        tx.getName(),
+                        tx.getStatus().name(),
+                        String.valueOf(tx.getDeadline()),
+                        "0",
+                        "0",
+                        "0",
+                        "",
+                        "0",
+                        String.valueOf(now),
+                        String.valueOf(now),
+                        tx.getXid()
+                    });
         }
     }
 
@@ -139,23 +191,33 @@ public final class RedisAtRepository implements AtRepository {
     @Override
     public void save(AtTransaction tx) {
         try (Jedis j = pool.getResource()) {
-            j.del(undoKey(tx.getXid()));
+            eval(j, CLEAR_UNDO_LUA, new String[] {undoKey(tx.getXid())}, new String[0]);
             for (UndoRecord u : tx.getUndoRecords()) {
-                Map<String, String> m = new HashMap<String, String>();
                 UndoContext ctx = new UndoContext(u.getResourceId(), u.getTableName());
-                m.put("resource_id", u.getResourceId());
-                m.put("table_name", u.getTableName());
-                m.put("pk_name", u.getPrimaryKeyColumn());
-                m.put("pk_value", String.valueOf(u.getPrimaryKeyValue()));
-                m.put("rollback_sql", u.getRollbackSql());
-                m.put("rollback_params", b64(codec.encodeParameters(u.getParameters(), ctx)));
-                if (u.getBeforeImage() != null)
-                    m.put("before_image", b64(codec.encodeRowImage(u.getBeforeImage(), ctx)));
-                if (u.getAfterImage() != null)
-                    m.put("after_image", b64(codec.encodeRowImage(u.getAfterImage(), ctx)));
-                m.put("status", u.isRolledBack() ? "ROLLED_BACK" : "EXECUTED");
-                j.hset(undoIdKey(tx.getXid(), u.getId()), m);
-                j.sadd(undoKey(tx.getXid()), u.getId());
+                String before =
+                        u.getBeforeImage() == null
+                                ? ""
+                                : b64(codec.encodeRowImage(u.getBeforeImage(), ctx));
+                String after =
+                        u.getAfterImage() == null
+                                ? ""
+                                : b64(codec.encodeRowImage(u.getAfterImage(), ctx));
+                eval(
+                        j,
+                        WRITE_UNDO_LUA,
+                        new String[] {undoIdKey(tx.getXid(), u.getId()), undoKey(tx.getXid())},
+                        new String[] {
+                            u.getResourceId(),
+                            u.getTableName(),
+                            u.getPrimaryKeyColumn(),
+                            String.valueOf(u.getPrimaryKeyValue()),
+                            u.getRollbackSql(),
+                            b64(codec.encodeParameters(u.getParameters(), ctx)),
+                            u.isRolledBack() ? "ROLLED_BACK" : "EXECUTED",
+                            before,
+                            after,
+                            u.getId()
+                        });
             }
         }
     }
@@ -164,17 +226,19 @@ public final class RedisAtRepository implements AtRepository {
     public boolean transition(String xid, AtStatus expected, long expectedVersion, AtStatus next) {
         try (Jedis j = pool.getResource()) {
             Object res =
-                    j.eval(
+                    eval(
+                            j,
                             TRANSITION_LUA,
-                            3,
-                            gkey(xid),
-                            statusSet(expected.name()),
-                            statusSet(next.name()),
-                            xid,
-                            expected.name(),
-                            String.valueOf(expectedVersion),
-                            next.name(),
-                            String.valueOf(System.currentTimeMillis()));
+                            new String[] {
+                                gkey(xid), statusSet(expected.name()), statusSet(next.name())
+                            },
+                            new String[] {
+                                xid,
+                                expected.name(),
+                                String.valueOf(expectedVersion),
+                                next.name(),
+                                String.valueOf(System.currentTimeMillis())
+                            });
             return "1".equals(String.valueOf(res));
         }
     }
@@ -183,13 +247,11 @@ public final class RedisAtRepository implements AtRepository {
     public boolean claimLease(String xid, String owner, long leaseUntil, long now) {
         try (Jedis j = pool.getResource()) {
             Object res =
-                    j.eval(
+                    eval(
+                            j,
                             CLAIM_LUA,
-                            1,
-                            gkey(xid),
-                            owner,
-                            String.valueOf(leaseUntil),
-                            String.valueOf(now));
+                            new String[] {gkey(xid)},
+                            new String[] {owner, String.valueOf(leaseUntil), String.valueOf(now)});
             return "1".equals(String.valueOf(res));
         }
     }
@@ -197,7 +259,7 @@ public final class RedisAtRepository implements AtRepository {
     @Override
     public void releaseLease(String xid, String owner) {
         try (Jedis j = pool.getResource()) {
-            j.eval(RELEASE_LUA, 1, gkey(xid), owner);
+            eval(j, RELEASE_LUA, new String[] {gkey(xid)}, new String[] {owner});
         } catch (Exception ignored) {
         }
     }
@@ -205,11 +267,15 @@ public final class RedisAtRepository implements AtRepository {
     @Override
     public void updateRecovery(String xid, int retries, long nextRetryAt) {
         try (Jedis j = pool.getResource()) {
-            Map<String, String> m = new HashMap<String, String>();
-            m.put("retry_count", String.valueOf(retries));
-            m.put("next_retry_at", String.valueOf(nextRetryAt));
-            m.put("updated_at", String.valueOf(System.currentTimeMillis()));
-            j.hset(gkey(xid), m);
+            eval(
+                    j,
+                    UPDATE_RECOVERY_LUA,
+                    new String[] {gkey(xid)},
+                    new String[] {
+                        String.valueOf(retries),
+                        String.valueOf(nextRetryAt),
+                        String.valueOf(System.currentTimeMillis())
+                    });
         }
     }
 
@@ -220,6 +286,8 @@ public final class RedisAtRepository implements AtRepository {
         try (Jedis j = pool.getResource()) {
             candidates.addAll(j.smembers(statusSet(AtStatus.ROLLING_BACK.name())));
             candidates.addAll(j.smembers(statusSet(AtStatus.ROLLBACK_FAILED.name())));
+            // COMMITTING：本地已提交但全局推进失败，需继续收敛，否则事务与全局锁永久泄漏
+            candidates.addAll(j.smembers(statusSet(AtStatus.COMMITTING.name())));
             for (String xid : j.smembers(statusSet(AtStatus.ACTIVE.name()))) {
                 String t = j.hget(gkey(xid), "timeout_at");
                 if (t != null && Long.parseLong(t) <= now) candidates.add(xid);
@@ -234,6 +302,7 @@ public final class RedisAtRepository implements AtRepository {
             else if (t.getStatus() == AtStatus.ROLLBACK_FAILED && t.getNextRetryAt() <= now)
                 out.add(t);
             else if (t.getStatus() == AtStatus.ACTIVE && t.getDeadline() <= now) out.add(t);
+            else if (t.getStatus() == AtStatus.COMMITTING && t.getNextRetryAt() <= now) out.add(t);
         }
         return out;
     }

@@ -10,10 +10,13 @@ import java.util.concurrent.*;
  * exponential schedule persisted to the branch store so delivery resumes after a restart.
  */
 public final class BranchRetryScheduler implements AutoCloseable {
+    private static final int DEFAULT_MAX_RETRIES = 20;
     private final BranchRepository branches;
     private final BranchCoordinator coordinator;
     private final long intervalMillis;
     private final int batchSize;
+    private final int maxRetries;
+    private final EasyAtMetrics metrics;
     private final ScheduledExecutorService executor;
     private volatile ScheduledFuture<?> task;
 
@@ -22,10 +25,22 @@ public final class BranchRetryScheduler implements AutoCloseable {
             BranchCoordinator coordinator,
             long intervalMillis,
             int batchSize) {
+        this(branches, coordinator, intervalMillis, batchSize, DEFAULT_MAX_RETRIES, null);
+    }
+
+    public BranchRetryScheduler(
+            BranchRepository branches,
+            BranchCoordinator coordinator,
+            long intervalMillis,
+            int batchSize,
+            int maxRetries,
+            EasyAtMetrics metrics) {
         this.branches = branches;
         this.coordinator = coordinator;
         this.intervalMillis = intervalMillis;
         this.batchSize = batchSize;
+        this.maxRetries = maxRetries > 0 ? maxRetries : DEFAULT_MAX_RETRIES;
+        this.metrics = metrics;
         this.executor =
                 Executors.newSingleThreadScheduledExecutor(
                         r -> {
@@ -55,13 +70,23 @@ public final class BranchRetryScheduler implements AutoCloseable {
             List<AtBranch> pending = branches.pendingActions(now, batchSize);
             for (AtBranch b : pending) {
                 if (b.getStatus().isTerminal()) continue;
+                int attempts = b.getRetries();
+                if (attempts >= maxRetries) {
+                    // 投递重试耗尽：必须收敛到人工介入并告警。否则这条分支会按退避上限无限重试，
+                    // 既不成功也不失败，运维完全无感知（此前这就是隐性数据不一致的来源）。
+                    branches.transition(
+                            b.getBranchId(), b.getStatus(), BranchStatus.MANUAL_INTERVENTION);
+                    if (metrics != null) metrics.recordManualIntervention();
+                    continue;
+                }
                 BranchStatus result =
                         coordinator.rollbackBranch(
-                                b.getBranchId()); // branch commit is driven by the
-                // initiating service; retries here are for
-                // rollback completion
-                if (result == BranchStatus.ROLLBACK_FAILED) {
-                    int retries = b.getRetries() + 1;
+                                b.getBranchId(),
+                                b.getXid(),
+                                b.getResourceId()); // 带上 xid/resourceId，让对端在分支缺失时
+                // 也能完成空回滚；commit 分支由发起方驱动，这里的重试只负责回滚收敛
+                if (result == BranchStatus.ROLLBACK_FAILED || result == BranchStatus.ROLLING_BACK) {
+                    int retries = attempts + 1;
                     branches.updateRecovery(
                             b.getBranchId(),
                             retries,

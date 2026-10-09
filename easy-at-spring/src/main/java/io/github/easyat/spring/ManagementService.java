@@ -18,6 +18,7 @@ public final class ManagementService {
     private final UndoDataCodec codec;
     private final List<AuditEntry> audit =
             Collections.synchronizedList(new ArrayList<AuditEntry>());
+    private ReconciliationService reconciliation;
 
     public ManagementService(
             AtRepository repository,
@@ -32,6 +33,31 @@ public final class ManagementService {
         this.enabled = enabled;
         this.token = token;
         this.codec = codec;
+    }
+
+    /**
+     * 挂上对账服务（可选）。挂上后 {@code GET /_easy-at/v1/reconciliation} 才会返回真实报告， 否则返回 {@code
+     * not_configured}——没有存储/锁管理器就没法对账，明确说出来好过给个空绿报告。
+     */
+    public void setReconciliationService(ReconciliationService reconciliation) {
+        this.reconciliation = reconciliation;
+    }
+
+    /**
+     * 影子运行对账报告：残留事务、锁泄漏、MANUAL_INTERVENTION / DIRTY_WRITE 计数。
+     *
+     * <p>投产前建议连续 ≥7 天定时拉取并做告警，阈值见 {@code RUNBOOK.md}。
+     */
+    public Map<String, Object> reconciliation() {
+        Map<String, Object> m = new LinkedHashMap<String, Object>();
+        if (reconciliation == null) {
+            m.put("error", "not_configured");
+            m.put(
+                    "hint",
+                    "no ReconciliationService wired (needs AtRepository + GlobalLockManager)");
+            return m;
+        }
+        return reconciliation.report().toMap();
     }
 
     public boolean isEnabled() {

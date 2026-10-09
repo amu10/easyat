@@ -12,7 +12,7 @@
 <dependency>
     <groupId>io.github.amu10</groupId>
     <artifactId>easy-at-spring-boot3-starter</artifactId>
-    <version>0.1.0</version>
+    <version>0.1.1</version>
 </dependency>
 ```
 
@@ -24,7 +24,7 @@ Spring Boot 2.7 项目改用 `easy-at-spring-boot2-starter`。
 > <dependency>
 >     <groupId>io.github.amu10</groupId>
 >     <artifactId>easy-at-storage-redis</artifactId>
->     <version>0.1.0</version>
+>     <version>0.1.1</version>
 > </dependency>
 > ```
 

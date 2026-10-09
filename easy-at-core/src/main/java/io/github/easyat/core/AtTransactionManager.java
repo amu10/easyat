@@ -2,6 +2,7 @@ package io.github.easyat.core;
 
 import java.sql.Connection;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 全局事务的驱动器：负责事务的创建、undo 记录追加、提交、回滚与恢复。
@@ -20,10 +21,24 @@ import java.util.*;
  * </ul>
  */
 public final class AtTransactionManager {
+    /** 回滚期间跨实例抢占租约的默认时长。 */
+    public static final long DEFAULT_ROLLBACK_LEASE_MILLIS = 30000L;
+
     private final AtRepository repository;
     private final UndoExecutor undoExecutor;
     private final GlobalLockManager lockManager;
     private final int maxRetries;
+
+    /** 本实例标识；为 null 表示不启用跨实例租约保护（单实例嵌入式用法）。 */
+    private final String owner;
+
+    private final long rollbackLeaseMillis;
+
+    /** 本进程内正在回滚的 XID，用于拦截同一 JVM 多线程并发回滚。 */
+    private final Set<String> rollbackInFlight = ConcurrentHashMap.newKeySet();
+
+    /** 哪些 XID 的租约是本次调用自己抢来的（结束时才需要释放）。 */
+    private final Map<String, Boolean> selfClaimed = new ConcurrentHashMap<String, Boolean>();
 
     public AtTransactionManager(AtRepository r, UndoExecutor u, int maxRetries) {
         this(r, u, null, maxRetries);
@@ -31,10 +46,22 @@ public final class AtTransactionManager {
 
     public AtTransactionManager(
             AtRepository r, UndoExecutor u, GlobalLockManager locks, int maxRetries) {
+        this(r, u, locks, maxRetries, null, DEFAULT_ROLLBACK_LEASE_MILLIS);
+    }
+
+    public AtTransactionManager(
+            AtRepository r,
+            UndoExecutor u,
+            GlobalLockManager locks,
+            int maxRetries,
+            String owner,
+            long rollbackLeaseMillis) {
         repository = r;
         undoExecutor = u;
         lockManager = locks;
         this.maxRetries = maxRetries;
+        this.owner = owner;
+        this.rollbackLeaseMillis = rollbackLeaseMillis;
     }
 
     /** 开启一个全局事务：生成 XID、持久化 ACTIVE 行、绑定到当前线程上下文。 */
@@ -47,26 +74,54 @@ public final class AtTransactionManager {
         return tx;
     }
 
-    /** 加入调用方已创建的全局事务（跨服务传播场景）。要求两个服务共享同一个 Repository。 */
+    /**
+     * 加入调用方已创建的全局事务（跨服务传播场景）。要求两个服务共享同一个 Repository。
+     *
+     * <p>防悬挂：只接受仍处于 ACTIVE 的事务。事务一旦进入 COMMITTING/ROLLING_BACK/终态，说明本次请求
+     * 来得太晚（常见于上游已超时回滚后请求才到达），必须直接拒绝而不是继续执行业务 SQL。
+     */
     public void join(String xid) {
-        required(xid);
+        AtTransaction tx = required(xid);
+        if (!tx.getStatus().isJoinable())
+            throw new AtException(
+                    "Cannot join AT transaction " + xid + " in status " + tx.getStatus());
         AtContext.bind(xid);
     }
 
     /** 追加一条 undo 记录（非连接绑定路径，如 File 存储）。 */
     public void append(UndoRecord record) {
         AtTransaction tx = required(record.getXid());
+        ensureModifiable(tx);
         tx.addUndo(record);
         repository.save(tx);
     }
 
-    /** 通过业务连接持久化 undo（连接绑定路径，与业务 DML 同连接、同事务提交）。 */
+    /**
+     * 通过业务连接持久化 undo（连接绑定路径，与业务 DML 同连接、同事务提交）。
+     *
+     * <p>这里同样执行 {@link #ensureModifiable}：长事务被恢复调度超时回滚之后，业务线程如果还在继续 执行 DML，必须在此刻失败，而不是把 undo
+     * 追加到一个已终结的事务上。
+     */
     public void append(Connection connection, UndoRecord record) {
+        AtTransaction tx = required(record.getXid());
+        ensureModifiable(tx);
         if (repository instanceof ConnectionBoundAtRepository) {
             ((ConnectionBoundAtRepository) repository).append(connection, record);
             return;
         }
-        append(record);
+        tx.addUndo(record);
+        repository.save(tx);
+    }
+
+    /** 只有 ACTIVE 的事务还能继续产生 undo。 */
+    private void ensureModifiable(AtTransaction tx) {
+        if (!tx.getStatus().isJoinable())
+            throw new AtException(
+                    "AT transaction "
+                            + tx.getXid()
+                            + " is "
+                            + tx.getStatus()
+                            + "; refusing further DML to avoid hanging data");
     }
 
     public void updateUndo(String xid, String undoId, RowImage after) {
@@ -116,6 +171,17 @@ public final class AtTransactionManager {
      * 回滚：进入 ROLLING_BACK 后，把 undo 记录<b>逆序</b>逐条执行。 任一条 undo 抛出 {@link DirtyWriteException} 则整笔转
      * DIRTY_WRITE（脏写，人工介入）； 其他异常转 ROLLBACK_FAILED 并按退避时间写入下一次重试点。
      */
+    /**
+     * 回滚：进入 ROLLING_BACK 后，把 undo 记录<b>逆序</b>逐条执行。 任一条 undo 抛出 {@link DirtyWriteException} 则整笔转
+     * DIRTY_WRITE（脏写，人工介入）； 其他异常转 ROLLBACK_FAILED 并按退避时间写入下一次重试点。
+     *
+     * <p><b>补偿执行权必须独占</b>。注意状态 ACTIVE→ROLLING_BACK 的 CAS 并不等价于"拿到补偿执行权"： 若一个工作者读到状态已经是
+     * ROLLING_BACK，CAS 会被短路跳过，直接闯进补偿循环；两个执行者并发跑同一批 undo 时，后到的那个会在脏写校验里看到"当前行不等于 after
+     * image"（其实是被自己的同伴改的），于是把一笔 明明已正确回滚的事务误判成 DIRTY_WRITE 交给人工。这在"长回滚期间租约过期、另一实例接管"的真实场景里必现。
+     *
+     * <p>因此这里用两道互斥：本进程内用 {@link #rollbackInFlight} 拦住并发线程，跨实例用恢复租约拦住其他
+     * 实例。租约过期时允许后来者接管，保证持有者崩溃后仍有人继续推进。
+     */
     public void rollback(String xid, boolean releaseLockOnConverge) {
         AtTransaction tx = required(xid);
         if (tx.getStatus() == AtStatus.ROLLED_BACK) {
@@ -124,8 +190,20 @@ public final class AtTransactionManager {
             if (releaseLockOnConverge) release(xid);
             return;
         }
-        if (tx.getStatus() != AtStatus.ROLLING_BACK && !transition(tx, AtStatus.ROLLING_BACK))
-            throw new AtException("Conflict rolling back " + xid + " from " + tx.getStatus());
+        if (!enterRollback(tx))
+            throw new AtException(
+                    "Conflict rolling back " + xid + ": another worker already owns this rollback");
+        try {
+            if (tx.getStatus() != AtStatus.ROLLING_BACK && !transition(tx, AtStatus.ROLLING_BACK))
+                throw new AtException("Conflict rolling back " + xid + " from " + tx.getStatus());
+            compensate(tx, xid, releaseLockOnConverge);
+        } finally {
+            exitRollback(xid);
+        }
+    }
+
+    /** 逆序执行全部 undo 并收敛终态；失败时按异常类型转 DIRTY_WRITE / ROLLBACK_FAILED。 */
+    private void compensate(AtTransaction tx, String xid, boolean releaseLockOnConverge) {
         List<UndoRecord> records = new ArrayList<UndoRecord>(tx.getUndoRecords());
         Collections.reverse(records);
         try {
@@ -153,6 +231,53 @@ public final class AtTransactionManager {
         }
     }
 
+    /**
+     * 取得本次回滚的独占执行权。
+     *
+     * <ol>
+     *   <li>本进程已有线程在回滚 → 拒绝（拦住单 JVM 内的并发调用）；
+     *   <li>租约归自己 → 放行（恢复调度器已抢到租约后再调用本方法的常规路径）；
+     *   <li>租约归他人且未过期 → 拒绝；
+     *   <li>无主或租约已过期 → 抢占后放行（覆盖持有者崩溃后的接管）。
+     * </ol>
+     */
+    private boolean enterRollback(AtTransaction tx) {
+        String xid = tx.getXid();
+        if (!rollbackInFlight.add(xid)) return false;
+        long now = System.currentTimeMillis();
+        String current = tx.getOwner();
+        if (owner != null && owner.equals(current)) {
+            // 调度器通常以同一 owner 先抢占租约，再驱动本方法；此时不应重复释放它的租约。
+            selfClaimed.put(xid, Boolean.FALSE);
+            return true;
+        }
+        if (current != null && !current.isEmpty() && tx.getLeaseUntil() >= now) {
+            rollbackInFlight.remove(xid);
+            return false;
+        }
+        if (owner != null && !repository.claimLease(xid, owner, now + rollbackLeaseMillis, now)) {
+            rollbackInFlight.remove(xid);
+            return false;
+        }
+        selfClaimed.put(xid, Boolean.TRUE);
+        return true;
+    }
+
+    private void exitRollback(String xid) {
+        try {
+            Boolean leased = selfClaimed.remove(xid);
+            if (leased != null && leased.booleanValue() && owner != null) {
+                try {
+                    repository.releaseLease(xid, owner);
+                } catch (RuntimeException ignored) {
+                    /* lease bookkeeping must not mask the rollback result */
+                }
+            }
+        } finally {
+            rollbackInFlight.remove(xid);
+        }
+    }
+
     /** 恢复一个待处理事务：重试次数耗尽则转 MANUAL_INTERVENTION（人工介入）， 否则自增重试计数、写退避后的下一次重试时间，再执行回滚。 */
     public void recover(AtTransaction tx) {
         if (tx.getRetries() >= maxRetries) {
@@ -165,6 +290,37 @@ public final class AtTransactionManager {
                 tx.getRetries(),
                 System.currentTimeMillis() + backoff(tx.getRetries()));
         rollback(tx.getXid(), true);
+    }
+
+    /**
+     * 收敛卡在 COMMITTING 的事务：本地事务已经提交，但 {@code ACTIVE→COMMITTING→COMMITTED} 的第二步没走完 （进程崩溃、DB
+     * 抖动、版本号被并发抢走）。
+     *
+     * <p>这类事务不能回滚（数据已落库），只能幂等往前推进到 COMMITTED 并释放全局锁。反复推进失败达到重试 上限后转
+     * MANUAL_INTERVENTION，否则该事务连同它持有的全局锁会永久泄漏，且运维没有任何告警。
+     */
+    public void finishCommit(String xid) {
+        AtTransaction tx = required(xid);
+        AtStatus status = tx.getStatus();
+        if (status == AtStatus.COMMITTED) {
+            // 前一轮可能刚写完终态就崩了，锁清理必须能重试。
+            release(xid);
+            return;
+        }
+        if (status != AtStatus.COMMITTING) return; // 已被其他路径收敛
+        if (tx.getRetries() >= maxRetries) {
+            transition(tx, AtStatus.MANUAL_INTERVENTION);
+            return;
+        }
+        if (transition(tx, AtStatus.COMMITTED)) {
+            release(xid);
+            return;
+        }
+        tx.incrementRetries();
+        repository.updateRecovery(
+                tx.getXid(),
+                tx.getRetries(),
+                System.currentTimeMillis() + backoff(tx.getRetries()));
     }
 
     /** 管理端驱动的状态变更（审计由调用方负责，见 ManagementService）。 */

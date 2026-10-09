@@ -1,0 +1,58 @@
+# 集成测试用中间件（MySQL 8 / PostgreSQL 16 / Redis 7）
+#
+# 用途：给 easy-at-db-tests 提供真实实例。启动：
+#   docker compose up -d
+#   ./mvnw -Pdbtest test      # 或 mvn -Pdbtest test
+# 用完：
+#   docker compose down -v
+#
+# 如果你内网已经有 MySQL/PostgreSQL/Redis，可以完全不用 Docker，直接用系统属性指过去，
+# 详见 easy-at-db-tests/README.md。
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: easyat-it-mysql
+    ports:
+      - "13306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: easyat
+      MYSQL_DATABASE: easyat
+      MYSQL_USER: easyat
+      MYSQL_PASSWORD: easyat
+    command:
+      # 与大多数生产环境一致的行格式/时区，避免测试环境与线上出现回放差异
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+00:00
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-peasyat"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: easyat-it-postgres
+    ports:
+      - "15432:5432"
+    environment:
+      POSTGRES_DB: easyat
+      POSTGRES_USER: easyat
+      POSTGRES_PASSWORD: easyat
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easyat -d easyat"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: easyat-it-redis
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

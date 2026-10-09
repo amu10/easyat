@@ -32,7 +32,9 @@ public enum AtStatus {
     static {
         TRANSITIONS.put(
                 ACTIVE, EnumSet.of(COMMITTING, ROLLING_BACK, DIRTY_WRITE, MANUAL_INTERVENTION));
-        TRANSITIONS.put(COMMITTING, EnumSet.of(COMMITTED));
+        // COMMITTING 意味着本地事务已提交，无法再回滚，只能往前推进到 COMMITTED；
+        // 推进彻底失败时必须能进 MANUAL_INTERVENTION，否则该事务连同其全局锁永久泄漏。
+        TRANSITIONS.put(COMMITTING, EnumSet.of(COMMITTED, MANUAL_INTERVENTION));
         TRANSITIONS.put(ROLLING_BACK, EnumSet.of(ROLLED_BACK, ROLLBACK_FAILED, DIRTY_WRITE));
         TRANSITIONS.put(ROLLBACK_FAILED, EnumSet.of(ROLLING_BACK, MANUAL_INTERVENTION));
         TRANSITIONS.put(COMMITTED, EnumSet.noneOf(AtStatus.class));
@@ -50,6 +52,15 @@ public enum AtStatus {
     public boolean canTransitionTo(AtStatus next) {
         Set<AtStatus> allowed = TRANSITIONS.get(this);
         return allowed != null && allowed.contains(next);
+    }
+
+    /**
+     * 只有 ACTIVE 的全局事务才接受新的参与者/新的 undo 写入。
+     *
+     * <p>已被超时回滚或已提交的事务如果还接受迟到请求，那些请求产生的 undo 会挂在已终结的 XID 下， 既不会被回滚也不会被告警——就是所谓的"悬挂数据"。
+     */
+    public boolean isJoinable() {
+        return this == ACTIVE;
     }
 
     /** Throws if the transition is illegal; used to fail fast on corrupted state. */
