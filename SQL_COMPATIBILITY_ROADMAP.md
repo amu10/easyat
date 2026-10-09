@@ -22,6 +22,7 @@
 | 4 | 多行 UPDATE/DELETE | 已完成（主键 IN） | 多行镜像、多锁键、影响行数上限 |
 | 5 | JDBC Batch | 已完成 | 参数批次快照、批量 Undo 项 |
 | 6 | 多数据源 Undo 路由 | 待实施 | 协调库与业务库分离、跨资源逆序回滚 |
+| 7 | 通用快照路径（子查询 / JOIN / 任意条件） | 已完成 | `GenericSnapshotPlanner` + `GenericAtExecutor`、多行 INSERT、参数下钻计数 |
 
 ## 3. 阶段 1：表达式分析和参数定位
 
@@ -122,15 +123,47 @@ Recognizer 只负责解析和生成执行计划；Executor 负责镜像、锁、
 
 这一阶段需要为 Undo 增加全局序号，不能依赖不同数据库的本地时间排序。
 
+## 8.1 阶段 7：通用快照路径
+
+此前不支持的语句一律抛 `UnsupportedAtSqlException`。阶段 7 换了个思路：**不再要求"能理解 WHERE"，
+而是把原语句的 FROM / WHERE / ORDER BY / LIMIT 拼成一条 SELECT，先读出所有会被影响的行**。
+
+```
+UPDATE account SET balance=? WHERE id IN (SELECT aid FROM frozen WHERE status=?)
+ ->
+SELECT account.* FROM account WHERE id IN (SELECT aid FROM frozen WHERE status = ?)
+```
+
+读到主键后逐行抢全局锁、逐行建 undo：
+
+- UPDATE 的 undo = 把整行（除主键）改回 before image；
+- DELETE 的 undo = 按 before image 插回整行。
+
+### 关键实现点
+
+1. **参数偏移**：UPDATE 的 `SET` 参数排在 `WHERE` 之前，而快照 SELECT 里没有 `SET`，必须跳过它们。
+   计数用 `ExpressionDeParser` 而不是 `ExpressionVisitorAdapter`——后者不会下钻子查询，
+   会把 `WHERE id IN (SELECT ... WHERE x=?)` 里的 `?` 漏掉，导致参数绑定错位。
+2. **逗号连接要补逗号**：`UPDATE a, b SET ...` 的第二个表落在 `startJoins` 里且渲染出来不带
+   `JOIN` 关键字，直接拼接会得到 `FROM a b` 这种语法错误。
+3. **多目标表仍然拒绝**：`UPDATE a,b SET a.x=?, b.y=?` 无法按单个表的行建 undo。
+4. **不给主键赋值**：`SET pk=?` 会让行在 undo 时找不到，明确拒绝。
+5. **行数上限照旧**：超出 `max-affected-rows` 就整条拒绝，不截断。
+
+### 验收条件
+
+- 子查询 / EXISTS / JOIN / 任意条件谓词的 UPDATE、DELETE 都能回滚且数据还原。
+- 多行 INSERT（`VALUES (...),(...)`，可混用字面量）回滚后行被删掉。
+- H2 上 11 个用例（含 planner 层的 SQL 构造断言）；真实 MySQL / PostgreSQL 上 3 个 IT。
+
 ## 9. 不在当前路线内的 SQL
 
 - DDL；
 - 存储过程；
 - MERGE；
-- 多表 UPDATE/DELETE；
-- 带 JOIN 的修改；
-- 无稳定主键的表；
-- 无法确定影响集合的动态 SQL。
+- 多目标表 UPDATE/DELETE（单目标表带 JOIN 已支持）；
+- 无稳定主键的表、复合主键表；
+- `INSERT ... SELECT` 与依赖自增主键的 INSERT（执行前拿不到主键）。
 
 这些能力只有在能证明镜像、锁和回滚正确性后才能单独立项。
 

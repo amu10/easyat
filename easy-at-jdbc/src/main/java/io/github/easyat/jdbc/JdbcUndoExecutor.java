@@ -110,7 +110,7 @@ public final class JdbcUndoExecutor implements UndoExecutor {
      *
      * <p>null 仍走 {@code setNull} 的通用路径：
      */
-    private static void bind(PreparedStatement p, int index, Object value) throws SQLException {
+    static void bind(PreparedStatement p, int index, Object value) throws SQLException {
         if (value == null) {
             p.setNull(index, java.sql.Types.NULL);
         } else if (value instanceof Long) {

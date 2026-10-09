@@ -11,19 +11,21 @@
 > 三个模块共用同一个 `easyat01` 库的 `easy_at_*` 协调表（undo 按 XID 聚合，caller 回滚时统一补偿双方数据）。
 > `easy-at-example-boot3` 本身只是聚合 pom（packaging=pom），不参与运行。
 
-## AT 模式受限 SQL（重要，写业务代码前先读）
+## AT 模式支持的 SQL（重要，写业务代码前先读）
 
-undo 日志生成器采用**保守策略**：接受按主键的 INSERT/UPDATE/DELETE，以及默认最多 100 行的
-`WHERE 主键 IN (?,...)` UPDATE/DELETE。UPDATE 支持参数、标量字面量、函数白名单和同列算术。
-不符合的语句会在执行时抛 `UnsupportedAtSqlException`——这是刻意的设计
-（不为无法确定的 SQL 生成「猜测性」undo），不是 bug。
+undo 日志有两条生成路径：
 
-| 语句 | 要求 |
+1. **严格主键路径**——`WHERE 主键=?` 或 `WHERE 主键 IN (?,...)`，靠参数直接定位受影响行，零额外查询。
+2. **通用快照路径**——其余语句先把原语句的 `FROM / WHERE / ORDER BY / LIMIT` 拼成一条 `SELECT`，
+   读出所有会被影响的行，再逐行建 undo、逐行抢全局锁。子查询、`EXISTS`、`JOIN`、任意条件谓词、
+   跨列 `SET` 表达式、表别名都走这条路径。
+
+| 语句 | 支持范围 |
 | --- | --- |
-| UPDATE | 支持参数、标量字面量、函数白名单和同列算术；支持 `WHERE 主键=?` 或 `WHERE 主键 IN (?,...)` |
-| DELETE | 支持 `WHERE 主键=?` 或 `WHERE 主键 IN (?,...)` |
-| INSERT | 必须**显式写出主键列**，且所有值都是 `?`（undo 是按主键 DELETE） |
-| 共同 | 表必须有**单列主键**；JDBC Batch 可用；不支持跨列计算、JOIN / 子查询 / 多表 / 表别名 / 未列入白名单的函数 |
+| UPDATE | `SET` 可以是参数、字面量、函数、跨列算术、`(SELECT ...)` 子查询；`WHERE` 可以是任意条件、子查询、`EXISTS`、`JOIN` 过滤、`ORDER BY ... LIMIT` |
+| DELETE | 同上，包括 `DELETE a FROM a JOIN b ...` |
+| INSERT | 支持多行 `VALUES (?,...),(?,...)`，字面量可与 `?` 混用；**必须显式写出主键列** |
+| 共同 | 表必须有**单列主键**；JDBC Batch 可用；行数上限默认 100，可配 `easy-at.sql.max-affected-rows` |
 
 ```java
 // ✅ 支持：目标列自身参与的算术组合
@@ -31,9 +33,22 @@ jdbc.update("UPDATE account SET balance=balance-? WHERE id=?", amount, userId);
 jdbc.update("UPDATE account SET balance=balance*?+? WHERE id=?", rate, bonus, userId);
 // ✅ 支持：标量字面量不占 JDBC 参数位置
 jdbc.update("UPDATE orders SET status='PAID' WHERE id=?", orderId);
-
-// ❌ 不支持：跨列计算，无法按当前保守规则验证表达式语义
+// ✅ 支持：跨列计算、子查询、JOIN（走通用快照路径）
 jdbc.update("UPDATE account SET balance=credit-? WHERE id=?", amount, userId);
+jdbc.update("UPDATE account SET balance=? WHERE id IN (SELECT aid FROM frozen WHERE status=?)", 0, "FROZEN");
+jdbc.update("UPDATE account a JOIN frozen f ON a.id=f.aid SET a.balance=? WHERE f.status=?", 0, "FROZEN");
+// ✅ 支持：多行 INSERT
+jdbc.update("INSERT INTO account(id,balance) VALUES (?,?),(?,?)", 1L, 100, 2L, 200);
+```
+
+仍然抛 `UnsupportedAtSqlException` 的（都是「无法定位受影响的行」，不是保守）：
+
+```java
+// ❌ 多目标表：UPDATE a,b SET a.x=?, b.y=? —— 无法按单个表的行建 undo
+// ❌ 给主键赋值：UPDATE account SET id=? WHERE ... —— 改完就找不到原来的行了
+// ❌ 无主键表 / 复合主键表
+// ❌ INSERT ... SELECT、依赖自增主键但 INSERT 里不写主键列
+// ❌ DDL / TRUNCATE / MERGE / 存储过程
 ```
 
 > 无论正向 UPDATE 是直接赋值、字面量还是同列算术，Undo 都直接把

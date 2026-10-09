@@ -42,11 +42,20 @@ UPDATE account SET status='PAID' WHERE id=?
 DELETE FROM account WHERE id=?
 ```
 
-多行主键操作默认支持最多 100 行，可通过 `easy-at.sql.max-affected-rows` 调整上限；
-当前仅支持可提前确定行集合的 `WHERE id IN (?,...)`。函数白名单、方言差异和 JDBC Batch 约束见
-[`SQL_COMPATIBILITY.md`](SQL_COMPATIBILITY.md)。
+SQL 支持分两条路径：
 
-表必须有单列主键（通过 JDBC 元数据识别，不依赖 `id` 命名），`UPDATE` 和 `DELETE` 的 `WHERE` 条件必须是主键精确匹配或有上限的主键 `IN`。UPDATE 支持参数、标量字面量、函数白名单和同列算术组合；跨列计算、多表 DML、子查询、存储过程、DDL、无主键表仍会在业务 SQL 执行前抛出 `UnsupportedAtSqlException`。
+1. **严格主键路径**——`WHERE 主键 = ?` 或 `WHERE 主键 IN (?,...)`，靠参数直接定位受影响行，零额外查询。
+2. **通用快照路径**——其余语句（子查询、`EXISTS`、`JOIN`、任意条件谓词、`ORDER BY ... LIMIT`、跨列 `SET` 表达式）
+   先把原语句的条件拼成一条 `SELECT` 读出所有会被影响的行，再逐行建 undo、逐行抢全局锁。
+
+表必须有单列主键（通过 JDBC 元数据识别，不依赖 `id` 命名）。两条路径都受行数上限约束，默认 100 行，
+可通过 `easy-at.sql.max-affected-rows` 调整——超限是**整条语句拒绝执行**，不是截断。
+
+仍会抛 `UnsupportedAtSqlException` 的（都是"无法定位受影响行"，而非保守）：多目标表 DML
+（`UPDATE a,b SET a.x=?, b.y=?`）、给主键列赋值、无主键/复合主键表、`INSERT ... SELECT`、
+依赖自增主键但 INSERT 里不写主键列、DDL、`TRUNCATE`、`MERGE`、存储过程。
+
+完整矩阵与 JDBC Batch 约束见 [`SQL_COMPATIBILITY.md`](SQL_COMPATIBILITY.md)。
 
 ## 跨服务 AT 协调
 

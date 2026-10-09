@@ -3,36 +3,67 @@ package io.github.easyat.jdbc;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import net.sf.jsqlparser.expression.JdbcParameter;
+import net.sf.jsqlparser.expression.Expression;
+import net.sf.jsqlparser.expression.operators.relational.ExpressionList;
 import net.sf.jsqlparser.schema.Column;
 import net.sf.jsqlparser.schema.Table;
 import net.sf.jsqlparser.statement.insert.Insert;
+import net.sf.jsqlparser.statement.select.Select;
+import net.sf.jsqlparser.statement.select.Values;
 
+/**
+ * 识别 INSERT，支持<b>多行 VALUES</b>（{@code INSERT INTO t(a,b) VALUES (?,?),(?,?)}）。
+ *
+ * <p>不支持 {@code INSERT ... SELECT}：被插入的行只有在执行后才存在，而 AT 的 undo 必须先在业务 DML 之前拿到主键——没有 {@code
+ * RETURN_GENERATED_KEYS} 就无从定位，此时宁可明确拒绝，也不能生成猜的 undo。
+ */
 final class InsertRecognizer implements AtSqlRecognizer<Insert, InsertRecognizer.Plan> {
     @Override
     public Plan recognize(Insert insert, AtSqlDialect dialect) {
+        String sql = insert.toString();
         RecognizerSupport.reject(
                 insert.getWithItemsList() != null
                         || insert.getColumns() == null
-                        || insert.getValues() == null
                         || insert.getConflictAction() != null
                         || RecognizerSupport.notEmpty(insert.getDuplicateUpdateSets())
                         || RecognizerSupport.notEmpty(insert.getSetUpdateSets()),
-                insert.toString());
+                sql);
         Table table = insert.getTable();
         String rawTable = RecognizerSupport.tableName(table);
         List<String> columns = new ArrayList<String>();
         for (Column column : insert.getColumns()) columns.add(column.getColumnName());
-        List<?> values = insert.getValues().getExpressions();
-        RecognizerSupport.reject(columns.size() != values.size(), insert.toString());
-        for (Object value : values)
-            RecognizerSupport.reject(!(value instanceof JdbcParameter), insert.toString());
+
+        Select select = insert.getSelect();
+        RecognizerSupport.reject(
+                !(select instanceof Values),
+                sql,
+                "INSERT ... SELECT 的行只有在执行后才存在，AT 无法在执行前取到主键来生成 undo；" + "请改为显式给出主键的逐行 INSERT");
+        ExpressionList<?> outer = ((Values) select).getExpressions();
+        RecognizerSupport.reject(outer == null || outer.isEmpty(), sql);
+
+        // 单行时 getExpressions() 直接给出列值；多行时每个元素是代表一行的小 ExpressionList。
+        List<List<Expression>> rows = new ArrayList<List<Expression>>();
+        if (outer.get(0) instanceof ExpressionList) {
+            for (Object element : outer) {
+                ExpressionList<?> row = (ExpressionList<?>) element;
+                RecognizerSupport.reject(row.size() != columns.size(), sql);
+                List<Expression> values = new ArrayList<Expression>(row.size());
+                for (Object value : row) values.add((Expression) value);
+                rows.add(values);
+            }
+        } else {
+            RecognizerSupport.reject(outer.size() != columns.size(), sql);
+            List<Expression> values = new ArrayList<Expression>(outer.size());
+            for (Object value : outer) values.add((Expression) value);
+            rows.add(values);
+        }
         return new Plan(
                 table,
                 rawTable,
                 dialect.quoteTable(
                         RecognizerSupport.identifier(table.getSchemaName()), table.getName()),
-                columns);
+                columns,
+                rows);
     }
 
     static final class Plan {
@@ -41,11 +72,23 @@ final class InsertRecognizer implements AtSqlRecognizer<Insert, InsertRecognizer
         final String tableRef;
         final List<String> columns;
 
-        Plan(Table table, String rawTable, String tableRef, List<String> columns) {
+        /** 每一行的列值表达式；只支持占位符与简单字面量。 */
+        final List<List<Expression>> rows;
+
+        Plan(
+                Table table,
+                String rawTable,
+                String tableRef,
+                List<String> columns,
+                List<List<Expression>> rows) {
             this.table = table;
             this.rawTable = rawTable;
             this.tableRef = tableRef;
             this.columns = Collections.unmodifiableList(new ArrayList<String>(columns));
+            List<List<Expression>> copy = new ArrayList<List<Expression>>(rows.size());
+            for (List<Expression> row : rows)
+                copy.add(Collections.unmodifiableList(new ArrayList<Expression>(row)));
+            this.rows = Collections.unmodifiableList(copy);
         }
     }
 }

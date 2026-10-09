@@ -153,7 +153,13 @@ class AtDataSourceTest {
     }
 
     @Test
-    void rejectsCrossColumnUpdateExpressions() throws Exception {
+    /**
+     * 跨列表达式（{@code SET balance=credit-?}）此前被拒，现在走通用快照路径支持。
+     *
+     * <p>通用路径不解析 SET 表达式——它只需要在执行前把整行读出来，执行后再按主键读回 after image， 因此 SET 里是子查询、函数还是跨列运算都不影响 undo
+     * 的正确性。
+     */
+    void supportsCrossColumnUpdateExpressions() throws Exception {
         JdbcDataSource raw = new JdbcDataSource();
         raw.setURL("jdbc:h2:mem:crossColumn;MODE=MySQL;DB_CLOSE_DELAY=-1");
         try (Connection c = raw.getConnection();
@@ -172,7 +178,13 @@ class AtDataSourceTest {
                         c.prepareStatement("UPDATE account SET balance=credit-? WHERE id=?")) {
             s.setInt(1, 1);
             s.setLong(2, 1L);
-            assertThrows(UnsupportedAtSqlException.class, s::executeUpdate);
+            assertEquals(1, s.executeUpdate());
+        }
+        try (Connection c = raw.getConnection();
+                Statement s = c.createStatement();
+                ResultSet r = s.executeQuery("SELECT balance FROM account WHERE id=1")) {
+            r.next();
+            assertEquals(9, r.getInt(1));
         }
     }
 
@@ -285,7 +297,13 @@ class AtDataSourceTest {
     }
 
     @Test
-    void rejectsUnsafePredicateBeforeExecutingDml() throws Exception {
+    /**
+     * 任意条件谓词（含 OR）此前被拒，现在走通用快照路径支持。
+     *
+     * <p>原来"在执行 DML 之前就拒绝"是为了保证"不会执行生成不了 undo 的语句"。这个保证依然成立—— 只是现在通用路径能为这类语句生成 undo（先按原 WHERE
+     * 整行快照），所以放行是安全的。
+     */
+    void supportsArbitraryPredicateAndStillRecordsUndo() throws Exception {
         JdbcDataSource raw = new JdbcDataSource();
         raw.setURL("jdbc:h2:mem:unsafeSql;MODE=MySQL;DB_CLOSE_DELAY=-1");
         try (Connection c = raw.getConnection();
@@ -305,13 +323,13 @@ class AtDataSourceTest {
             s.setInt(1, 0);
             s.setLong(2, 1L);
             s.setInt(3, 100);
-            assertThrows(UnsupportedAtSqlException.class, s::executeUpdate);
+            assertEquals(1, s.executeUpdate());
         }
         try (Connection c = raw.getConnection();
                 Statement s = c.createStatement();
                 ResultSet r = s.executeQuery("SELECT balance FROM account WHERE id=1")) {
             r.next();
-            assertEquals(100, r.getInt(1));
+            assertEquals(0, r.getInt(1));
         }
     }
 

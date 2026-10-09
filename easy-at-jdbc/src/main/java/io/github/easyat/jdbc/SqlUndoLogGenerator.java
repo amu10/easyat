@@ -42,6 +42,7 @@ final class SqlUndoLogGenerator {
     private final UpdateRecognizer updateRecognizer;
     private final DeleteRecognizer deleteRecognizer;
     private final InsertRecognizer insertRecognizer;
+    private final int maxAffectedRows;
     private final UpdateAtExecutor updateExecutor = new UpdateAtExecutor();
     private final DeleteAtExecutor deleteExecutor = new DeleteAtExecutor();
     private final InsertAtExecutor insertExecutor = new InsertAtExecutor();
@@ -117,6 +118,7 @@ final class SqlUndoLogGenerator {
         this.updateRecognizer = new UpdateRecognizer(maxAffectedRows);
         this.deleteRecognizer = new DeleteRecognizer(maxAffectedRows);
         this.insertRecognizer = new InsertRecognizer();
+        this.maxAffectedRows = maxAffectedRows;
     }
 
     void setAfterCommitHook(Runnable hook) {
@@ -134,20 +136,34 @@ final class SqlUndoLogGenerator {
         // 传入业务连接：让分支行与本次 DML、undo log 落在同一个本地事务里（§4.3 分支状态原子性）。
         // 不支持的实现会忽略该参数并退回独立连接注册，行为与之前一致。
         registrar.register(xid, resourceId, c);
-        if (statement instanceof Update)
-            return updateExecutor.execute(
-                    this,
-                    c,
-                    xid,
-                    updateRecognizer.recognize((Update) statement, dialect),
-                    parameters);
-        if (statement instanceof Delete)
-            return deleteExecutor.execute(
-                    this,
-                    c,
-                    xid,
-                    deleteRecognizer.recognize((Delete) statement, dialect),
-                    parameters);
+        if (statement instanceof Update) {
+            Update update = (Update) statement;
+            try {
+                return updateExecutor.execute(
+                        this, c, xid, updateRecognizer.recognize(update, dialect), parameters);
+            } catch (UnsupportedAtSqlException strict) {
+                return generic(
+                        c,
+                        xid,
+                        GenericSnapshotPlanner.forUpdate(update, dialect, maxAffectedRows),
+                        parameters,
+                        strict);
+            }
+        }
+        if (statement instanceof Delete) {
+            Delete delete = (Delete) statement;
+            try {
+                return deleteExecutor.execute(
+                        this, c, xid, deleteRecognizer.recognize(delete, dialect), parameters);
+            } catch (UnsupportedAtSqlException strict) {
+                return generic(
+                        c,
+                        xid,
+                        GenericSnapshotPlanner.forDelete(delete, dialect, maxAffectedRows),
+                        parameters,
+                        strict);
+            }
+        }
         if (statement instanceof Insert)
             return insertExecutor.execute(
                     this,
@@ -156,6 +172,55 @@ final class SqlUndoLogGenerator {
                     insertRecognizer.recognize((Insert) statement, dialect),
                     parameters);
         throw unsupported(sql);
+    }
+
+    /**
+     * 通用快照路径：严格主键识别失败后的兜底。
+     *
+     * <p>两条路径都失败时抛出合并后的异常——只报严格路径的原因会让使用者误以为"框架不支持子查询"， 而真正的原因可能是快照也建不出来（多目标表、没主键等），必须一并说出来。
+     */
+    private Capture generic(
+            Connection c,
+            String xid,
+            GenericSnapshotPlanner.Plan plan,
+            Map<Integer, Object> parameters,
+            UnsupportedAtSqlException strict)
+            throws SQLException {
+        try {
+            return GenericAtExecutor.execute(this, c, xid, plan, parameters);
+        } catch (UnsupportedAtSqlException fallbackFailure) {
+            UnsupportedAtSqlException combined =
+                    new UnsupportedAtSqlException(
+                            strict.getMessage()
+                                    + " | the generic before-image snapshot also failed: "
+                                    + fallbackFailure.getMessage());
+            combined.addSuppressed(strict);
+            throw combined;
+        }
+    }
+
+    /**
+     * 执行 before-image 快照：用原语句的 WHERE（以及 ORDER BY / LIMIT）把受影响的行整个读出来。
+     *
+     * <p>参数偏移说明：UPDATE 的 SET 子句参数排在前面，而快照 SELECT 里没有 SET，所以要从 {@code plan.parameterOffset}
+     * 之后开始取原语句的参数。
+     */
+    List<RowImage> snapshot(
+            Connection c, GenericSnapshotPlanner.Plan plan, Map<Integer, Object> parameters)
+            throws SQLException {
+        try (PreparedStatement s = c.prepareStatement(plan.snapshotSql)) {
+            for (int i = 1; i <= plan.parameterCount; i++)
+                JdbcUndoExecutor.bind(s, i, require(parameters, plan.parameterOffset + i));
+            try (ResultSet r = s.executeQuery()) {
+                List<RowImage> rows = new ArrayList<RowImage>();
+                while (r.next()) {
+                    rows.add(image(r));
+                    // 多读一行用来判断"超限"，不要把整表都拉进内存。
+                    if (rows.size() > plan.maxRows) break;
+                }
+                return rows;
+            }
+        }
     }
 
     /** DML 执行成功后回填 after image；若存在本地事务则在提交后再触发 afterCommit 钩子（分支提交用）。 */
@@ -294,10 +359,17 @@ final class SqlUndoLogGenerator {
         return new ArrayList<String>(candidates);
     }
 
+    /**
+     * 严格路径要求 WHERE 命中主键。
+     *
+     * <p>不满足时抛 {@link UnsupportedAtSqlException} 而不是 {@link AtException}：这正是通用快照路径要接管的场景
+     * （任意条件谓词），抛"不支持"才能触发回退，而不是直接把业务打断。
+     */
     static void assertPrimaryKey(Connection c, Table table, String column) throws SQLException {
         String actual = findPrimaryKey(c, table);
         if (!unquote(column).equalsIgnoreCase(actual))
-            throw new AtException("WHERE column must be the primary key: " + table + "." + column);
+            throw new UnsupportedAtSqlException(
+                    "WHERE column must be the primary key: " + table + "." + column);
     }
 
     private static String tableName(Table table) {
@@ -311,14 +383,17 @@ final class SqlUndoLogGenerator {
         return normalized.toLowerCase(Locale.ROOT).startsWith("easy_at_");
     }
 
+    /**
+     * 框架自己的表（easy_at_*）写操作必须放行，否则注册分支会递归触发分支注册直到连接池耗尽。
+     *
+     * <p>这里刻意允许别名：业务 SQL 带别名是常态，判定"是不是框架内部表"只需要表名本身。
+     */
     private static boolean internalStatement(Statement statement) {
-        if (statement instanceof Update)
-            return internal(tableName(((Update) statement).getTable()));
-        if (statement instanceof Delete)
-            return internal(tableName(((Delete) statement).getTable()));
-        if (statement instanceof Insert)
-            return internal(tableName(((Insert) statement).getTable()));
-        return false;
+        Table table = null;
+        if (statement instanceof Update) table = ((Update) statement).getTable();
+        else if (statement instanceof Delete) table = ((Delete) statement).getTable();
+        else if (statement instanceof Insert) table = ((Insert) statement).getTable();
+        return table != null && internal(RecognizerSupport.unquote(table.getName()));
     }
 
     static int indexOf(List<String> columns, String name) {

@@ -66,6 +66,16 @@
 - 分支唯一性约束 `(xid, resource_id)`：建表脚本已含，存量库跑
   `db/{mysql,postgresql}/migration/v0.1.2__branch_unique.sql`（先去重再加约束）。
 
+## 分支注册必须走业务连接（2026-10-09）
+
+- `SqlUndoLogGenerator#capture(Connection c, ...)` 里的 `c` 是 **物理连接**（`target.getConnection()`），
+  不经代理 → 在它上面直接跑框架 SQL 不会递归触发分支注册。
+- 分支注册经 `BranchRegistrar#register(xid, resourceId, Object conn)` → `BranchRepository#registerIn`
+  落到业务连接，与业务 DML / undo log 同事务；业务回滚则分支行一并消失。
+- Redis/File 存储没有本地事务概念，`registerIn` 默认返回 false → 自动回退独立连接注册。
+- **PG 陷阱**：业务事务内任何一条语句报错都会把整个事务标记 aborted。所以分支 INSERT 前先在**业务
+  连接上查重**，撞唯一键冲突时 `rollback(savepoint)`，不要让异常冒到业务事务里。
+
 ## 状态（2026-09-23）
 
 - P0/P1/P2/Redis/加解密脱敏 SPI/WebClient/管理 UI 均已实现；`mvn clean compile` 通过、jdbc 10 用例全绿。

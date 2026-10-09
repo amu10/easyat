@@ -524,7 +524,47 @@ Redis 不是单服务投产的绝对前置条件；如果使用 JDBC，必须先
 | # | 事项 | 为什么必须做 |
 |---|---|---|
 | 1 | 提交改动并发布新版本 | 已发布的 0.1.1 是修复前代码；正式版在 Central 不可覆盖，必须升版本重发 |
-| 2 | 用真实业务 SQL 过一遍 AT 能力边界 | AT 刻意只接受"按主键、单行、值为 `?`"的 DML，批量/JOIN/子查询直接抛 `UnsupportedAtSqlException`。别到线上才发现大片 SQL 被拒 |
+| 2 | 用真实业务 SQL 过一遍 AT 能力边界 | 子查询/JOIN/任意条件/多行 INSERT 已支持（§17），但**仍拒绝**多目标表 DML、给主键赋值、无主键表、`INSERT ... SELECT`、依赖自增主键却不写主键列。别到线上才发现这些被拒 |
 | 3 | 按 `RUNBOOK.md` 灰度并影子对账 ≥7 天 | 核心一致性逻辑改完即发、零 soak time。盯 `easy_at_global` 残留、锁泄漏、`MANUAL_INTERVENTION` 计数 |
 
 另：`~/.m2/settings.xml` 里明文存了 Central Token 与 GPG 口令，建议轮换。
+
+## 17. 2026-10-09 通用快照路径：子查询 / JOIN / 多行 INSERT（原"刻意拒绝"，现已支持）
+
+此前除"按主键、单行、值为 `?`"之外的 DML 一律抛 `UnsupportedAtSqlException`。这对真实业务 SQL 是硬伤——
+批量更新、带子查询的删除、`UPDATE ... JOIN` 都是日常写法。现在换了个思路：
+
+**不再要求框架"理解" WHERE，而是把原语句的 `FROM / WHERE / ORDER BY / LIMIT` 拼成一条 SELECT，
+先读出所有会被影响的行，再逐行建 undo、逐行抢全局锁。**
+
+```
+UPDATE account SET balance=? WHERE id IN (SELECT aid FROM frozen WHERE status=?)
+ ->
+SELECT account.* FROM account WHERE id IN (SELECT aid FROM frozen WHERE status = ?)
+```
+
+| 层 | 改动 |
+|---|---|
+| `GenericSnapshotPlanner` | 由 UPDATE/DELETE AST 构造快照 SQL；识别单目标表（JOIN 落在 `startJoins`/`joins`，PG 的 `FROM` 落在 `fromItem`） |
+| `GenericAtExecutor` | 快照 → 逐行加锁 → UPDATE 整行还原 / DELETE 整行插回 → 写入 undo |
+| `SqlUndoLogGenerator#capture` | 严格路径抛 `UnsupportedAtSqlException` 后回退通用路径；两条路都失败时合并报错原因 |
+| `RecognizerSupport#parameterCount` | 用 `ExpressionDeParser` 计数——`ExpressionVisitorAdapter` **不下钻子查询**，会把 `WHERE id IN (SELECT ... WHERE x=?)` 的 `?` 漏掉，导致参数绑定错位 |
+| `InsertRecognizer` / `InsertAtExecutor` | 多行 `VALUES (...),(...)`；字面量与 `?` 混用时按文本顺序推进参数下标 |
+| 别名 | `RecognizerSupport#tableName` 对别名由 `AtException` 改成"不支持"，让语句有机会落到通用路径 |
+
+实现的三个坑：
+
+1. **参数偏移**：UPDATE 的 SET 参数排在 WHERE 之前，快照 SELECT 没有 SET，必须跳过。
+2. **逗号连接要补逗号**：`UPDATE a, b SET ...` 的第二个表渲染出来不带 JOIN 关键字，直接拼会得到 `FROM a b`。
+3. **多目标表 / 给主键赋值仍拒绝**：前者无法按单个表的行建 undo，后者改完就找不到原行了。
+
+回归：
+
+- H2：`GenericAtSqlTest` 11 例（子查询 UPDATE/DELETE、任意谓词、`SET` 子查询、多行 INSERT、
+  字面量混用、行数上限、多目标表拒绝、主键赋值拒绝、JOIN/PG-FROM 的快照 SQL 构造、子查询参数计数）
+- 真实库：`JoinAndSubqueryAtIT` 3 例（MySQL 5.7 的 `UPDATE ... JOIN`、MySQL 子查询 DELETE、PG 的 `UPDATE ... FROM`）
+- 既有断言同步更新：`AtDataSourceTest` 两条"应拒绝"改为"应支持并回滚"、`InsertRecognizerTest` 字面量改为支持
+
+仍不支持（都是"无法定位受影响的行"）：多目标表 DML、`SET pk=?`、无主键/复合主键表、
+`INSERT ... SELECT`、依赖自增主键却不写主键列、DDL、`TRUNCATE`、`MERGE`、存储过程。
+完整矩阵见 `SQL_COMPATIBILITY.md`，演进记录见 `SQL_COMPATIBILITY_ROADMAP.md` §8.1。
