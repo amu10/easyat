@@ -12,7 +12,10 @@ import redis.clients.jedis.JedisPool;
  * List, List)} 执行，读操作只用 {@code hgetAll} / {@code smembers}。 详见 {@link RedisAtRepository} 的类注释。
  */
 public final class RedisBranchRepository implements BranchRepository {
+    /** Redis 连接池。 */
     private final JedisPool pool;
+
+    /** 键前缀（默认 "easy-at"）。 */
     private final String prefix;
 
     public RedisBranchRepository(JedisPool pool) {

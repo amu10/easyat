@@ -28,10 +28,19 @@ public final class AtDataSource implements DataSource {
     /** Default safety cap for one explicit primary-key IN statement. */
     public static final int DEFAULT_MAX_AFFECTED_ROWS = 100;
 
+    /** 本数据源在 easyAt 中的资源标识（与 undo/branch/lock 记录里的 resource_id 对应）。 */
     private final String resourceId;
+
+    /** 被代理的原始数据源。 */
     private final DataSource delegate;
+
+    /** undo log 生成器：解析 SQL、查 before image、抢锁、持久化 undo。 */
     private final SqlUndoLogGenerator generator;
+
+    /** 本地事务桥：判断是否为 @Transactional 活动事务、以及注册 afterCommit 钩子。 */
     private final LocalTransactionBridge bridge;
+
+    /** 是否强制要求每个 AT 资源处于 Spring 本地事务中（无事务则拒绝执行）。 */
     private final boolean requireLocalTransaction;
 
     public AtDataSource(

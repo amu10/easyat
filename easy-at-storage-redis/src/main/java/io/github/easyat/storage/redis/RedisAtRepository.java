@@ -31,8 +31,13 @@ import redis.clients.jedis.JedisPool;
  * 这样无论按哪个版本编译、运行期是哪一版，字节码都能解析。
  */
 public final class RedisAtRepository implements AtRepository {
+    /** Redis 连接池（所有写操作经它执行 Lua，读操作走 hgetAll/smembers）。 */
     private final JedisPool pool;
+
+    /** before/after image 与参数的编解码器。 */
     private final UndoDataCodec codec;
+
+    /** 所有键的统一前缀（默认 "easy-at"），多租户/多实例隔离用。 */
     private final String prefix;
 
     /**
@@ -40,6 +45,7 @@ public final class RedisAtRepository implements AtRepository {
      */
     private final long ttlSeconds;
 
+    /** 配套的终止态清理器，由 starter 装配到定时调度。 */
     private final RedisCleanup cleanup;
 
     public RedisAtRepository(JedisPool pool) {

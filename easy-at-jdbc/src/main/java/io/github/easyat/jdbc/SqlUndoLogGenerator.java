@@ -489,6 +489,7 @@ final class SqlUndoLogGenerator {
     }
 
     private static final class Where {
+        /** 命中主键条件的列名（严格路径用于校验 WHERE 是否真的落在主键上）。 */
         final String column;
 
         Where(String column) {
@@ -497,9 +498,16 @@ final class SqlUndoLogGenerator {
     }
 
     static final class Capture {
+        /** 本行 DML 对应的 undo 记录。 */
         final UndoRecord record;
+
+        /** undo 作用的表名与主键列（锁键与定位行用）。 */
         final String table, pk;
+
+        /** 主键的具体值。 */
         final Object key;
+
+        /** 多行 DML 时，children 持有每一行的子 Capture；单行为 null。 */
         final List<Capture> children;
 
         Capture(UndoRecord record, String table, String pk, Object key) {

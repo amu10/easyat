@@ -28,7 +28,10 @@ import javax.sql.DataSource;
  * {@code easy_at_lock} 三张表， 所以混合模式下业务库不需要建那三张表。
  */
 public final class JdbcUndoRepository implements ConnectionBoundUndoRepository {
+    /** 业务库数据源：只管 easy_at_undo_log 这一张表。 */
     private final DataSource dataSource;
+
+    /** before/after image 与参数的编解码器。 */
     private final UndoDataCodec codec;
 
     public JdbcUndoRepository(DataSource dataSource) {

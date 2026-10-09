@@ -8,6 +8,7 @@ import net.sf.jsqlparser.statement.update.Update;
 import net.sf.jsqlparser.statement.update.UpdateSet;
 
 final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer.Plan> {
+    /** 单条语句影响行数上限（主键 IN 的大小上限），超出即拒绝生成 undo。 */
     private final int maxAffectedRows;
 
     UpdateRecognizer() {
@@ -58,12 +59,25 @@ final class UpdateRecognizer implements AtSqlRecognizer<Update, UpdateRecognizer
     }
 
     static final class Plan {
+        /** 被更新的目标表（已解析的 AST 节点，用于查主键元数据）。 */
         final Table table;
+
+        /** 未加引号的「schema.表」名，多实例间锁键必须一致。 */
         final String rawTable;
+
+        /** 已按方言加引号的表引用，用于拼 undo SQL。 */
         final String tableRef;
+
+        /** SET 子句里被赋值的列名列表（顺序与 SQL 一致）。 */
         final List<String> columns;
+
+        /** SET 子句中占位符 {@code ?} 的个数（用于拼接 undo 时定位参数下标）。 */
         final int assignmentParameterCount;
+
+        /** WHERE 命中的主键列名。 */
         final String primaryKeyColumn;
+
+        /** WHERE 条件里占位符 {@code ?} 的个数。 */
         final int predicateParameterCount;
 
         Plan(

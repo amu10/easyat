@@ -128,7 +128,10 @@ final class RecognizerSupport {
     }
 
     static final class PredicatePlan {
+        /** WHERE 条件里「命中主键」的那个列名（严格路径要求主键精确条件）。 */
         final String column;
+
+        /** 该谓词里占位符 {@code ?} 的个数（主键条件为 1，主键 IN 为集合大小）。 */
         final int parameterCount;
 
         PredicatePlan(String column, int parameterCount) {

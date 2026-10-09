@@ -9,16 +9,37 @@ import java.util.*;
  */
 public final class AtTransaction implements Serializable {
     private static final long serialVersionUID = 1L;
+
+    /** 全局事务 id（UUID）与业务可读名称。 */
     private final String xid, name;
+
+    /** 创建时间、超时时间点（毫秒时间戳）。超时未提交则进入恢复扫描。 */
     private final long createdAt, deadline;
+
+    /** 当前状态（见 {@link AtStatus} 的合法迁移表）。 */
     private AtStatus status = AtStatus.ACTIVE;
+
+    /** 已重试次数。 */
     private int retries;
+
+    /** 下一次允许重试的时间点（毫秒时间戳）。 */
     private long nextRetryAt;
+
+    /** 乐观锁版本号：每次状态迁移 +1，CAS 据此保证并发恢复不重复驱动同一事务。 */
     private long version;
+
+    /** 当前持有恢复租约的实例标识；为空表示无主。 */
     private String owner;
+
+    /** 恢复租约到期时间（毫秒时间戳）；到期后方可被其他实例接管。 */
     private long leaseUntil;
+
+    /** 进入 DIRTY_WRITE 时记录的问题表名与主键，供人工介入定位。 */
     private String dirtyWriteTable;
+
     private String dirtyWriteKey;
+
+    /** 本事务的全部 undo 记录（内存快照，持久化由存储层负责）。 */
     private final List<UndoRecord> undoRecords = new ArrayList<UndoRecord>();
 
     public AtTransaction(String xid, String name, long now, long deadline) {

@@ -29,8 +29,13 @@ import redis.clients.jedis.JedisPool;
  * 唯一签名稳定的写通道。
  */
 public final class RedisCleanup {
+    /** Redis 连接池。 */
     private final JedisPool pool;
+
+    /** 键前缀（默认 "easy-at"）。 */
     private final String prefix;
+
+    /** 兜底 TTL（秒）：touch 保活时刷新的过期时间；0 表示不续期。 */
     private final long ttlSeconds;
 
     public RedisCleanup(JedisPool pool) {

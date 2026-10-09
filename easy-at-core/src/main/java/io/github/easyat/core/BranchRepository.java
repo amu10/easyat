@@ -5,6 +5,7 @@ import java.util.Optional;
 
 /** Persistence for AT branches (one participating DataSource per global transaction). */
 public interface BranchRepository {
+    /** 注册一个分支。幂等：同一 (xid, resourceId) 重复注册应被忽略或命中已存在记录。 */
     void register(AtBranch branch);
 
     /**

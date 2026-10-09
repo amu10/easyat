@@ -15,12 +15,25 @@ import redis.clients.jedis.JedisPool;
  * held leases.
  */
 public final class RedisGlobalLockManager implements GlobalLockManager, AutoCloseable {
+    /** Redis 连接池。 */
     private final JedisPool pool;
+
+    /** 锁租约时长（毫秒）：超时未续租将被其他事务接管。 */
     private final long leaseMillis;
+
+    /** 单次加锁最长等待（毫秒）；0 表示抢不到即失败。 */
     private final long waitMillis;
+
+    /** 键前缀（默认 "easy-at"）。 */
     private final String prefix;
+
+    /** 后台续租调度器：定期刷新本实例持有的锁租约，避免长事务期间锁过期。 */
     private final ScheduledExecutorService renewer;
+
+    /** 本实例当前持有的锁 key → xid，用于 releaseByXid 与续租时快速定位。 */
     private final Map<String, String> held = new ConcurrentHashMap<String, String>();
+
+    /** 关闭标记：关闭后不再接受加锁，续租线程退出。 */
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     public RedisGlobalLockManager(JedisPool pool) {

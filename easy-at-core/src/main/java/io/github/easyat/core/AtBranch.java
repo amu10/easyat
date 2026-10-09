@@ -6,10 +6,20 @@ import java.util.UUID;
 /** A branch is one participating DataSource's AT work for a global transaction. */
 public final class AtBranch implements Serializable {
     private static final long serialVersionUID = 1L;
+
+    /** 分支的五个标识/归属字段：分支 id（UUID）、所属全局事务 xid、资源 id、 发起方服务名、回调地址（TCC 类分支用于反向通知）。 */
     private final String branchId, xid, resourceId, serviceName, callbackUrl;
+
+    /** 同一全局事务下分支的执行顺序，回滚/提交按此排序。 */
     private final int sequence;
+
+    /** 分支当前状态（见 {@link BranchStatus} 的合法迁移表）。 */
     private BranchStatus status = BranchStatus.REGISTERED;
+
+    /** 已重试次数（TCC 分支回调失败后的补偿重试）。 */
     private int retries;
+
+    /** 创建时间、最后更新时间、下一次重试时间点（毫秒时间戳）。 */
     private long createdAt, updatedAt, nextRetryAt;
 
     public AtBranch(

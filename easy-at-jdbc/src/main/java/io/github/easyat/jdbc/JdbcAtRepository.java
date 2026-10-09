@@ -10,7 +10,10 @@ import javax.sql.DataSource;
  */
 public final class JdbcAtRepository
         implements ConnectionBoundAtRepository, ConnectionBoundUndoRepository {
+    /** 业务库数据源：事务状态、undo log 都落在这里。 */
     private final DataSource dataSource;
+
+    /** before/after image 与参数的编解码器（默认 Jackson，可被加解密/脱敏 SPI 包装）。 */
     private final UndoDataCodec codec;
 
     public JdbcAtRepository(DataSource dataSource) {

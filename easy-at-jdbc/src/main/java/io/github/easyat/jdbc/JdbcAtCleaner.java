@@ -146,8 +146,13 @@ public final class JdbcAtCleaner {
     }
 
     private static final class LockKey {
+        /** 资源 id。 */
         private final String resourceId;
+
+        /** 表名。 */
         private final String tableName;
+
+        /** 主键列的值。 */
         private final String primaryKeyValue;
 
         private LockKey(String resourceId, String tableName, String primaryKeyValue) {
@@ -158,8 +163,13 @@ public final class JdbcAtCleaner {
     }
 
     public static final class CleanupResult {
+        /** 本批次清理的 COMMITTED 事务行数。 */
         private final int committedTransactions;
+
+        /** 本批次清理的 ROLLED_BACK 事务行数。 */
         private final int rolledBackTransactions;
+
+        /** 本批次清理的过期全局锁行数。 */
         private final int expiredLocks;
 
         CleanupResult(int committedTransactions, int rolledBackTransactions, int expiredLocks) {

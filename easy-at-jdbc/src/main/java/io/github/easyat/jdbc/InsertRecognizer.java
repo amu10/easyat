@@ -67,12 +67,19 @@ final class InsertRecognizer implements AtSqlRecognizer<Insert, InsertRecognizer
     }
 
     static final class Plan {
+        /** 被插入的目标表（AST 节点，用于查主键元数据）。 */
         final Table table;
+
+        /** 未加引号的「schema.表」名，多实例间锁键必须一致。 */
         final String rawTable;
+
+        /** 已按方言加引号的表引用，用于拼 undo SQL。 */
         final String tableRef;
+
+        /** INSERT 显式给出的列名列表（顺序与 VALUES 一致）。 */
         final List<String> columns;
 
-        /** 每一行的列值表达式；只支持占位符与简单字面量。 */
+        /** 每一行的列值表达式（外层 List=行，内层 List=该行的列值）；只支持占位符与简单字面量。 */
         final List<List<Expression>> rows;
 
         Plan(

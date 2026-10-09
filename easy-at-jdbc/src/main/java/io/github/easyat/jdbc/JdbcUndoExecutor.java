@@ -9,6 +9,7 @@ import javax.sql.DataSource;
 
 /** Executes compensating SQL and refuses to overwrite data changed after this AT branch. */
 public final class JdbcUndoExecutor implements UndoExecutor {
+    /** 资源 id → 数据源 的映射，决定某条 undo 记录去哪个库执行补偿 SQL。 */
     private final Map<String, DataSource> resources;
 
     public JdbcUndoExecutor(Map<String, DataSource> resources) {
